@@ -21,4 +21,4 @@ if not exist ".env" (
 )
 
 :: Launch in Git Bash
-start "" "%GITBASH%" --cd="%~dp0" -c "bash core/loop.sh; read -p 'Runner exited. Press Enter to close.'"
+"%GITBASH%" --cd="%CD%" -c "bash core/loop.sh; exec bash"
