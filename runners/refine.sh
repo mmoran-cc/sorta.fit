@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Recipe: Refine cards from To Do -> Refined
+# Runner: Refine cards — generates structured specs
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,12 +9,12 @@ source "$SORTA_ROOT/core/config.sh"
 source "$SORTA_ROOT/core/utils.sh"
 source "$SORTA_ROOT/adapters/${BOARD_ADAPTER}.sh"
 
-log_info "Refiner: checking $RECIPE_REFINE_FROM lane..."
+log_info "Refiner: checking $RUNNER_REFINE_FROM lane..."
 
-ISSUE_IDS=$(board_get_cards_in_status "$RECIPE_REFINE_FROM" "$MAX_CARDS_REFINE")
+ISSUE_IDS=$(board_get_cards_in_status "$RUNNER_REFINE_FROM" "$MAX_CARDS_REFINE")
 
 if [[ -z "$ISSUE_IDS" ]]; then
-  log_info "No cards in $RECIPE_REFINE_FROM. Nothing to refine."
+  log_info "No cards in $RUNNER_REFINE_FROM. Nothing to refine."
   exit 0
 fi
 
@@ -51,10 +51,10 @@ for ISSUE_ID in $ISSUE_IDS; do
   board_update_description "$ISSUE_KEY" "$(cat "$RESULT_FILE")"
   board_add_comment "$ISSUE_KEY" "Card refined by Sorta.Fit on $(date '+%Y-%m-%d %H:%M'). Review and move to Agent lane when ready."
 
-  if [[ -n "$RECIPE_REFINE_TO" ]]; then
-    local_transition="TRANSITION_TO_${RECIPE_REFINE_TO}"
+  if [[ -n "$RUNNER_REFINE_TO" ]]; then
+    local_transition="TRANSITION_TO_${RUNNER_REFINE_TO}"
     board_transition "$ISSUE_KEY" "${!local_transition}"
-    log_info "Done: $ISSUE_KEY refined and moved to $RECIPE_REFINE_TO"
+    log_info "Done: $ISSUE_KEY refined and moved to $RUNNER_REFINE_TO"
   else
     log_info "Done: $ISSUE_KEY refined (no transition configured)"
   fi

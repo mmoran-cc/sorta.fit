@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sorta - Setup Wizard</title>
+<title>Sorta.Fit - Setup Wizard</title>
 <style>
 *, *::before, *::after {
   box-sizing: border-box;
@@ -365,34 +365,6 @@ select option:disabled {
   padding-right: 16px;
 }
 
-/* Lanes table */
-.lanes-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 16px 0;
-}
-
-.lanes-table th {
-  text-align: left;
-  padding: 8px 10px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-muted);
-  border-bottom: 2px solid var(--border);
-}
-
-.lanes-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  font-size: 13px;
-}
-
-.lanes-table input {
-  width: 100%;
-  padding: 6px 8px;
-  font-size: 13px;
-}
-
 /* Checkboxes */
 .checkbox-group {
   margin: 16px 0;
@@ -438,6 +410,80 @@ select option:disabled {
   color: var(--text-muted);
   display: block;
   margin-top: 2px;
+}
+
+/* Pipeline diagram */
+.pipeline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin: 20px 0;
+  flex-wrap: wrap;
+  padding: 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.pipeline-node {
+  background: var(--card);
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.pipeline-node.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pipeline-arrow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  min-width: 50px;
+}
+
+.pipeline-arrow .arrow-line {
+  width: 100%;
+  height: 2px;
+  background: var(--border);
+  position: relative;
+  margin: 2px 0;
+}
+
+.pipeline-arrow .arrow-line::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  top: -4px;
+  border: 5px solid transparent;
+  border-left-color: var(--border);
+}
+
+.pipeline-arrow .arrow-label {
+  font-size: 10px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.pipeline-arrow .arrow-label.human {
+  color: var(--warning);
+}
+
+.pipeline-node.human-gate {
+  border-color: var(--warning);
+  border-style: dashed;
+  color: var(--warning);
+  font-size: 11px;
 }
 
 /* Dashboard */
@@ -525,6 +571,14 @@ select option:disabled {
   .btn-row-right .btn {
     flex: 1;
   }
+  .pipeline {
+    flex-direction: column;
+    gap: 4px;
+  }
+  .pipeline-arrow {
+    transform: rotate(90deg);
+    min-width: 30px;
+  }
 }
 </style>
 </head>
@@ -546,11 +600,19 @@ select option:disabled {
     { label: "Welcome" },
     { label: "Dependencies" },
     { label: "Board" },
-    { label: "Lanes" },
+    { label: "Runners" },
+    { label: "Configure" },
     { label: "Git" },
-    { label: "Recipes" },
     { label: "Review" },
     { label: "Running" }
+  ];
+
+  var RUNNER_DEFS = [
+    { id: "refine", name: "Refine", desc: "Break down cards into acceptance criteria and specs using AI analysis." },
+    { id: "code", name: "Code", desc: "Implement cards in isolated worktrees, open PRs automatically." },
+    { id: "review", name: "Review", desc: "Review PR diffs and post structured feedback on GitHub." },
+    { id: "triage", name: "Triage", desc: "Analyze bug reports, identify root causes, write triage reports." },
+    { id: "bounce", name: "Bounce", desc: "Move cards with rejected PR reviews back for automated rework." }
   ];
 
   var state = {
@@ -566,18 +628,15 @@ select option:disabled {
       email: "",
       apiToken: "",
       projectKey: "",
-      lanes: {},
       baseBranch: "main",
       pollInterval: 60,
-      maxRefineCards: 5,
-      maxCodeCards: 2,
       recipes: ["refine", "code"],
       routing: {
-        refine: { from: "To Do", to: "REFINED" },
-        code:   { from: "Agent", to: "QA" },
-        review: { from: "QA", to: "" },
-        triage: { from: "To Do", to: "REFINED" },
-        bounce: { from: "QA", to: "AGENT" }
+        refine:  { fromId: "", toId: "", maxCards: 5 },
+        code:    { fromId: "", toId: "", maxCards: 2 },
+        review:  { fromId: "", toId: "", maxCards: 10 },
+        triage:  { fromId: "", toId: "", maxCards: 5 },
+        bounce:  { fromId: "", toId: "", maxCards: 10 }
       }
     },
     runner: {
@@ -628,6 +687,13 @@ select option:disabled {
     return resp.json();
   }
 
+  function statusName(id) {
+    for (var i = 0; i < state.discoveredStatuses.length; i++) {
+      if (state.discoveredStatuses[i].id === id) return state.discoveredStatuses[i].name;
+    }
+    return id || "(none)";
+  }
+
   // ---- Step indicator ----
 
   function renderStepIndicator() {
@@ -676,12 +742,17 @@ select option:disabled {
     return '' +
       '<h2>Welcome to Sorta.Fit</h2>' +
       '<p class="description">' +
-        'Sorta.Fit connects your issue board to Claude Code to handle the repetitive parts of your sprint. ' +
-        'It watches your board and runs recipes -- refining cards into specs, implementing features in isolated branches, ' +
-        'opening pull requests, and reviewing diffs -- so you can focus on the decisions that matter.' +
+        'Sorta.Fit connects your issue board to Claude Code for autonomous sprint execution. ' +
+        'It polls your board, picks up cards, and runs them through a configurable pipeline: ' +
+        'spec refinement, implementation in isolated worktrees, PR creation, code review, and bug triage.' +
       '</p>' +
-      '<p class="description" style="margin-bottom:0">' +
-        'You stay in control. Sorta.Fit handles the legwork, you handle the judgment calls: what gets built, what gets merged, and when.' +
+      '<p class="description">' +
+        'It runs in the background on your computer -- as long as it\'s on, your board keeps moving. ' +
+        'Configure human review gates where you need them, or let it handle everything.' +
+      '</p>' +
+      '<p class="description" style="margin-bottom:0;font-size:13px;color:var(--text-muted)">' +
+        'Sorta.Fit runs from inside your project repository so it can read your code, run your tests, and commit to branches. ' +
+        'Drop the <code style="background:var(--bg);padding:2px 6px;border-radius:3px">sorta-fit</code> folder into your repo and run the setup from there.' +
       '</p>' +
       '<div class="btn-row">' +
         '<div class="btn-row-right">' +
@@ -696,7 +767,11 @@ select option:disabled {
 
   function renderDeps() {
     var items = ["git", "node", "claude", "gh"];
-    var labels = { git: "Git", node: "Node.js", claude: "Claude CLI", gh: "GitHub CLI" };
+    // git-bash is added by the server on Windows
+    if (state.deps && state.deps["git-bash"]) {
+      items.push("git-bash");
+    }
+    var labels = { git: "Git", node: "Node.js", claude: "Claude CLI", gh: "GitHub CLI", "git-bash": "Git Bash (Windows)" };
     var html = '<h2>Check Dependencies</h2>' +
       '<p>Verifying that all required tools are installed on this system.</p>' +
       '<ul class="checklist" id="depList">';
@@ -731,7 +806,8 @@ select option:disabled {
     var allOk = state.deps && state.deps.git && state.deps.git.found &&
                 state.deps.node && state.deps.node.found &&
                 state.deps.claude && state.deps.claude.found &&
-                state.deps.gh && state.deps.gh.found;
+                state.deps.gh && state.deps.gh.found &&
+                (!state.deps["git-bash"] || state.deps["git-bash"].found);
 
     html += '<div class="btn-row">' +
       backBtn() +
@@ -759,19 +835,19 @@ select option:disabled {
     } catch(e) {
       state.deps = {};
       renderCard();
-      var hint = e.message === "Failed to fetch" ? " -- is the setup server running? Use setup.bat or setup.sh to start it." : "";
+      var hint = e.message === "Failed to fetch" ? " -- is the setup server running?" : "";
       showMsg("depMsg", "error", "Failed to check dependencies: " + e.message + hint);
     }
   };
 
   window._wizNext1 = goNext;
 
-  // ---- Step 2: Connect Board ----
+  // ---- Step 2: Board Connection + Discovery ----
 
   function renderBoard() {
     var c = state.config;
     var html = '<h2>Connect Board</h2>' +
-      '<p>Configure the connection to your issue tracking board.</p>' +
+      '<p>Configure the connection to your issue board. After testing the connection, we\'ll discover your board\'s statuses and transitions.</p>' +
       '<div class="form-group">' +
         '<label for="adapter">Adapter</label>' +
         '<select id="adapter" onchange="window._wizBoardField(\'adapter\', this.value)">' +
@@ -798,13 +874,52 @@ select option:disabled {
         '<span class="hint">e.g. PROJ</span>' +
         '<input type="text" id="projectKey" value="' + escHtml(c.projectKey) + '" onchange="window._wizBoardField(\'projectKey\', this.value)" />' +
       '</div>' +
-      '<button class="btn btn-secondary" onclick="window._wizTestConn()">Test Connection</button>' +
-      '<div id="connMsg" class="msg"></div>' +
-      '<div class="btn-row">' +
-        backBtn() +
-        '<div class="btn-row-right">' +
-          '<button class="btn btn-primary" ' + (state.connectionTested ? '' : 'disabled') + ' onclick="window._wizNext2()">Next</button>' +
+      '<div style="display:flex;gap:12px">' +
+        '<button class="btn btn-secondary" onclick="window._wizTestConn()">Test Connection</button>' +
+        '<button class="btn btn-secondary" onclick="window._wizDiscover()"' +
+          (state.connectionTested ? '' : ' disabled') + '>Discover Board</button>' +
+      '</div>' +
+      '<div id="connMsg" class="msg"></div>';
+
+    if (state.boardDiscovered && state.discoveredStatuses.length > 0) {
+      html += '<div style="margin-top:16px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:6px">' +
+        '<div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--success)">Board discovered</div>' +
+        '<div style="font-size:12px;color:var(--text-muted)">' +
+          state.discoveredStatuses.length + ' statuses, ' +
+          state.discoveredTransitions.length + ' transitions found' +
         '</div>' +
+        '<details style="margin-top:8px;font-size:12px;color:var(--text-muted)">' +
+          '<summary style="cursor:pointer;color:var(--accent)">View details</summary>' +
+          '<div style="margin-top:8px;display:flex;gap:24px;flex-wrap:wrap">' +
+            '<div><strong style="color:var(--text)">Statuses</strong><br>';
+      for (var s = 0; s < state.discoveredStatuses.length; s++) {
+        html += escHtml(state.discoveredStatuses[s].name + ' (' + state.discoveredStatuses[s].id + ')') + '<br>';
+      }
+      html += '</div>';
+      if (state.discoveredTransitions.length > 0) {
+        html += '<div><strong style="color:var(--text)">Transitions</strong><br>';
+        for (var t = 0; t < state.discoveredTransitions.length; t++) {
+          var tr = state.discoveredTransitions[t];
+          html += escHtml(tr.name + ' -> ' + tr.toName + ' (id:' + tr.id + ')') + '<br>';
+        }
+        html += '</div>';
+      }
+      html += '</div></details></div>';
+    }
+
+    var canProceed = state.connectionTested && state.boardDiscovered;
+    var hint = '';
+    if (!state.connectionTested) {
+      hint = '<span style="font-size:12px;color:var(--text-muted)">Test your connection to continue</span>';
+    } else if (!state.boardDiscovered) {
+      hint = '<span style="font-size:12px;color:var(--text-muted)">Discover your board to continue</span>';
+    }
+    html += '<div class="btn-row">' +
+      backBtn() +
+      '<div class="btn-row-right" style="align-items:center">' +
+        hint +
+        '<button class="btn btn-primary" ' + (canProceed ? '' : 'disabled') + ' onclick="window._wizNext2()">Next</button>' +
+      '</div>' +
       '</div>';
     return html;
   }
@@ -812,7 +927,7 @@ select option:disabled {
   window._wizBoardField = function(field, val) {
     state.config[field] = val;
     state.connectionTested = false;
-    var nextBtn = document.querySelector(".btn-primary:last-of-type");
+    state.boardDiscovered = false;
   };
 
   window._wizTestConn = async function() {
@@ -838,97 +953,16 @@ select option:disabled {
       }
       state.connectionTested = true;
       renderCard();
-      showMsg("connMsg", "success", result.message || "Connection successful.");
+      showMsg("connMsg", "success", result.message + " -- now click Discover Board.");
     } catch(e) {
       state.connectionTested = false;
       showMsg("connMsg", "error", "Connection failed: " + e.message);
     }
   };
 
-  window._wizNext2 = goNext;
-
-  // ---- Step 3: Configure Lanes ----
-
-  var LANE_DEFS = [
-    { key: "TODO", label: "To Do", hint: "Cards waiting to be worked on" },
-    { key: "REFINED", label: "Refined", hint: "Cards with specs ready for implementation" },
-    { key: "AGENT", label: "Agent", hint: "Cards assigned to the AI coder" },
-    { key: "IN_PROGRESS", label: "In Progress", hint: "Cards actively being worked" },
-    { key: "QA", label: "QA", hint: "Cards with PRs ready for review" },
-    { key: "DONE", label: "Done", hint: "Completed cards" },
-    { key: "BACKLOG", label: "Backlog", hint: "Low-priority or future cards" }
-  ];
-
-  function renderLanes() {
-    var lanes = state.config.lanes;
-
-    var html = '<h2>Configure Lanes</h2>' +
-      '<p>Map your board statuses and transitions to Sorta.Fit lanes. Click "Discover Board" to auto-detect available values.</p>' +
-      '<button class="btn btn-secondary" onclick="window._wizDiscover()" style="margin-bottom:16px">Discover Board</button>' +
-      '<div id="lanesMsg" class="msg"></div>';
-
-    // Show discovered statuses/transitions as reference if available
-    if (state.discoveredStatuses && state.discoveredStatuses.length > 0) {
-      html += '<details style="margin-bottom:16px;font-size:13px;color:var(--text-muted)">' +
-        '<summary style="cursor:pointer;color:var(--accent);margin-bottom:8px">Available statuses and transitions (reference)</summary>' +
-        '<div style="display:flex;gap:24px;flex-wrap:wrap">' +
-        '<div><strong style="color:var(--text)">Statuses</strong><br>';
-      for (var s = 0; s < state.discoveredStatuses.length; s++) {
-        html += escHtml(state.discoveredStatuses[s].id + ' - ' + state.discoveredStatuses[s].name) + '<br>';
-      }
-      html += '</div>';
-      if (state.discoveredTransitions && state.discoveredTransitions.length > 0) {
-        html += '<div><strong style="color:var(--text)">Transitions</strong><br>';
-        for (var t = 0; t < state.discoveredTransitions.length; t++) {
-          var tr = state.discoveredTransitions[t];
-          html += escHtml(tr.id + ' - ' + tr.name + ' -> ' + tr.to) + '<br>';
-        }
-        html += '</div>';
-      }
-      html += '</div></details>';
-    }
-
-    html += '<table class="lanes-table">' +
-      '<thead><tr>' +
-        '<th>Lane</th>' +
-        '<th>Status ID</th>' +
-        '<th>Transition ID</th>' +
-      '</tr></thead>' +
-      '<tbody>';
-
-    for (var i = 0; i < LANE_DEFS.length; i++) {
-      var def = LANE_DEFS[i];
-      var lane = lanes[def.key] || {};
-      html += '<tr>' +
-        '<td><span style="font-weight:600">' + escHtml(def.label) + '</span>' +
-          '<br><span style="font-size:11px;color:var(--text-muted)">' + escHtml(def.hint) + '</span></td>' +
-        '<td><input type="text" id="lane_status_' + def.key + '" value="' + escHtml(lane.statusId || "") +
-          '" onchange="window._wizLaneField(\'' + def.key + '\', \'statusId\', this.value)" placeholder="e.g. 10000" /></td>' +
-        '<td><input type="text" id="lane_trans_' + def.key + '" value="' + escHtml(lane.transitionId || "") +
-          '" onchange="window._wizLaneField(\'' + def.key + '\', \'transitionId\', this.value)" placeholder="e.g. 11" /></td>' +
-        '</tr>';
-    }
-
-    html += '</tbody></table>' +
-      '<div class="btn-row">' +
-        backBtn() +
-        '<div class="btn-row-right">' +
-          '<button class="btn btn-primary" onclick="window._wizNext3()">Next</button>' +
-        '</div>' +
-      '</div>';
-    return html;
-  }
-
-  window._wizLaneField = function(lane, field, val) {
-    if (!state.config.lanes[lane]) {
-      state.config.lanes[lane] = {};
-    }
-    state.config.lanes[lane][field] = val;
-  };
-
   window._wizDiscover = async function() {
-    hideMsg("lanesMsg");
-    showMsg("lanesMsg", "info", "Discovering board configuration...");
+    hideMsg("connMsg");
+    showMsg("connMsg", "info", "Discovering board configuration...");
     try {
       var data = await apiPost("/api/discover-board", {
         adapter: state.config.adapter,
@@ -938,207 +972,49 @@ select option:disabled {
         projectKey: state.config.projectKey
       });
       if (!data.success) {
-        showMsg("lanesMsg", "error", data.message || "Discovery failed.");
+        showMsg("connMsg", "error", data.message || "Discovery failed.");
         return;
       }
       state.discoveredStatuses = data.statuses || [];
       state.discoveredTransitions = data.transitions || [];
-
-      // Auto-match discovered statuses to lanes by name
-      var nameMap = {
-        "to do": "TODO", "todo": "TODO", "open": "TODO",
-        "refined": "REFINED", "ready for dev": "REFINED", "ready": "REFINED",
-        "agent": "AGENT", "selected for development": "AGENT",
-        "in progress": "IN_PROGRESS", "in development": "IN_PROGRESS",
-        "qa": "QA", "in review": "QA", "review": "QA", "code review": "QA",
-        "done": "DONE", "closed": "DONE", "resolved": "DONE",
-        "backlog": "BACKLOG"
-      };
-      for (var s = 0; s < data.statuses.length; s++) {
-        var status = data.statuses[s];
-        var laneKey = nameMap[status.name.toLowerCase()];
-        if (laneKey && !state.config.lanes[laneKey]) {
-          state.config.lanes[laneKey] = { statusId: status.id, transitionId: "" };
-        }
-      }
-      // Auto-match transitions by target status name
-      for (var t = 0; t < (data.transitions || []).length; t++) {
-        var trans = data.transitions[t];
-        var transLane = nameMap[(trans.to || "").toLowerCase()];
-        if (transLane && state.config.lanes[transLane] && !state.config.lanes[transLane].transitionId) {
-          state.config.lanes[transLane].transitionId = trans.id;
-        }
-      }
       state.boardDiscovered = true;
       renderCard();
-      showMsg("lanesMsg", "success", "Board discovered and auto-matched. Review the values below and adjust as needed.");
+      showMsg("connMsg", "success", "Board discovered. Click Next to configure runners.");
     } catch(e) {
-      showMsg("lanesMsg", "error", "Discovery failed: " + e.message);
+      showMsg("connMsg", "error", "Discovery failed: " + e.message);
     }
   };
 
-  window._wizNext3 = function() {
-    // Only TODO, QA, REFINED are strictly required for basic operation
-    var lanes = state.config.lanes;
-    var required = ["TODO", "REFINED", "QA"];
-    var missing = [];
-    for (var i = 0; i < required.length; i++) {
-      if (!lanes[required[i]] || !lanes[required[i]].statusId) {
-        missing.push(required[i]);
-      }
-    }
-    if (missing.length > 0) {
-      showMsg("lanesMsg", "error", "Please provide a status ID for at least: " + missing.join(", "));
-      return;
-    }
-    goNext();
-  };
+  window._wizNext2 = goNext;
 
-  // ---- Step 4: Git Settings ----
+  // ---- Step 3: Select Runners ----
 
-  function renderGit() {
-    var c = state.config;
-    var html = '<h2>Git Settings</h2>' +
-      '<p>Configure version control and automation parameters.</p>' +
-      '<div class="form-group">' +
-        '<label for="baseBranch">Base Branch</label>' +
-        '<input type="text" id="baseBranch" value="' + escHtml(c.baseBranch) + '" onchange="window._wizGitField(\'baseBranch\', this.value)" />' +
-      '</div>' +
-      '<div class="form-group">' +
-        '<label for="pollInterval">Poll Interval (minutes)</label>' +
-        '<input type="number" id="pollInterval" value="' + c.pollInterval + '" min="1" onchange="window._wizGitField(\'pollInterval\', parseInt(this.value) || 60)" />' +
-      '</div>' +
-      '<div class="form-group">' +
-        '<label for="maxRefineCards">Max Cards per Refine Cycle</label>' +
-        '<input type="number" id="maxRefineCards" value="' + c.maxRefineCards + '" min="1" onchange="window._wizGitField(\'maxRefineCards\', parseInt(this.value) || 5)" />' +
-      '</div>' +
-      '<div class="form-group">' +
-        '<label for="maxCodeCards">Max Cards per Code Cycle</label>' +
-        '<input type="number" id="maxCodeCards" value="' + c.maxCodeCards + '" min="1" onchange="window._wizGitField(\'maxCodeCards\', parseInt(this.value) || 2)" />' +
-      '</div>' +
-      '<div class="btn-row">' +
-        backBtn() +
-        '<div class="btn-row-right">' +
-          '<button class="btn btn-primary" onclick="window._wizNext4()">Next</button>' +
-        '</div>' +
-      '</div>';
-    return html;
-  }
-
-  window._wizGitField = function(field, val) {
-    state.config[field] = val;
-  };
-
-  window._wizNext4 = function() {
-    var c = state.config;
-    if (!c.baseBranch) {
-      alert("Base branch is required.");
-      return;
-    }
-    if (c.pollInterval < 1) {
-      alert("Poll interval must be at least 1 minute.");
-      return;
-    }
-    goNext();
-  };
-
-  // ---- Step 5: Select Recipes ----
-
-  var RECIPE_DEFS = [
-    { id: "refine", name: "Refine", desc: "Break down cards into acceptance criteria and subtasks using AI analysis." },
-    { id: "code", name: "Code", desc: "Implement cards in isolated worktrees, open PRs automatically." },
-    { id: "review", name: "Review", desc: "Review PR diffs and post structured feedback on GitHub." },
-    { id: "triage", name: "Triage", desc: "Analyze bug reports, identify root causes, write triage reports." },
-    { id: "bounce", name: "Bounce", desc: "Move cards with rejected PR reviews back for automated rework." }
-  ];
-
-  // Build status name options from discovered statuses
-  function statusOptions(selectedName) {
-    var statuses = state.discoveredStatuses || [];
-    var html = '<option value="">(none -- don\'t move)</option>';
-    // Also include common defaults in case discovery hasn't run
-    var seen = {};
-    for (var i = 0; i < statuses.length; i++) {
-      var name = statuses[i].name;
-      var sel = (name === selectedName) ? " selected" : "";
-      html += '<option value="' + escHtml(name) + '"' + sel + '>' + escHtml(name) + '</option>';
-      seen[name] = true;
-    }
-    // If the current value isn't in the list, add it
-    if (selectedName && !seen[selectedName]) {
-      html += '<option value="' + escHtml(selectedName) + '" selected>' + escHtml(selectedName) + '</option>';
-    }
-    return html;
-  }
-
-  // Build transition key options from adapter config lane defs
-  function transitionOptions(selectedKey) {
-    var opts = [
-      { key: "", label: "(none -- don't move)" },
-      { key: "TODO", label: "To Do" },
-      { key: "REFINED", label: "Refined" },
-      { key: "AGENT", label: "Agent" },
-      { key: "IN_PROGRESS", label: "In Progress" },
-      { key: "QA", label: "QA" },
-      { key: "DONE", label: "Done" },
-      { key: "BACKLOG", label: "Backlog" }
-    ];
-    var html = "";
-    for (var i = 0; i < opts.length; i++) {
-      var sel = (opts[i].key === selectedKey) ? " selected" : "";
-      html += '<option value="' + opts[i].key + '"' + sel + '>' + escHtml(opts[i].label) + '</option>';
-    }
-    return html;
-  }
-
-  function renderRecipes() {
+  function renderSelectRecipes() {
     var selected = state.config.recipes;
-    var routing = state.config.routing;
 
-    var html = '<h2>Select Recipes</h2>' +
-      '<p>Enable recipes and configure which lanes they read from and move cards to.</p>' +
+    var html = '<h2>Select Runners</h2>' +
+      '<p>Choose which automation runners to enable. You\'ll configure their lanes and limits in the next step.</p>' +
       '<div class="checkbox-group">';
 
-    for (var i = 0; i < RECIPE_DEFS.length; i++) {
-      var r = RECIPE_DEFS[i];
+    for (var i = 0; i < RUNNER_DEFS.length; i++) {
+      var r = RUNNER_DEFS[i];
       var checked = selected.indexOf(r.id) !== -1;
-      var route = routing[r.id] || { from: "", to: "" };
-
-      html += '<div class="checkbox-item" style="flex-direction:column;align-items:stretch;cursor:default">' +
-        '<div style="display:flex;align-items:flex-start;gap:12px">' +
-          '<input type="checkbox" value="' + r.id + '"' + (checked ? " checked" : "") +
-            ' onchange="window._wizToggleRecipe(\'' + r.id + '\', this.checked)" style="cursor:pointer" />' +
-          '<div class="recipe-info">' +
-            '<span class="recipe-name">' + escHtml(r.name) + '</span>' +
-            '<span class="recipe-desc">' + escHtml(r.desc) + '</span>' +
-          '</div>' +
-        '</div>';
-
-      if (checked) {
-        html += '<div style="display:flex;gap:12px;margin-top:12px;padding-left:28px">' +
-          '<div style="flex:1">' +
-            '<label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Read from</label>' +
-            '<input type="text" value="' + escHtml(route.from) + '" placeholder="Status name" ' +
-              'onchange="window._wizRouteField(\'' + r.id + '\', \'from\', this.value)" style="font-size:13px" />' +
-          '</div>' +
-          '<div style="flex:1">' +
-            '<label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Move to</label>' +
-            '<select onchange="window._wizRouteField(\'' + r.id + '\', \'to\', this.value)" style="font-size:13px">' +
-              transitionOptions(route.to) +
-            '</select>' +
-          '</div>' +
-        '</div>';
-      }
-
-      html += '</div>';
+      html += '<div class="checkbox-item">' +
+        '<input type="checkbox" value="' + r.id + '"' + (checked ? " checked" : "") +
+          ' onchange="window._wizToggleRecipe(\'' + r.id + '\', this.checked)" style="cursor:pointer" />' +
+        '<div class="recipe-info">' +
+          '<span class="recipe-name">' + escHtml(r.name) + '</span>' +
+          '<span class="recipe-desc">' + escHtml(r.desc) + '</span>' +
+        '</div>' +
+      '</div>';
     }
 
     html += '</div>' +
-      '<div id="recipeMsg" class="msg"></div>' +
+      '<div id="recipeSelectMsg" class="msg"></div>' +
       '<div class="btn-row">' +
         backBtn() +
         '<div class="btn-row-right">' +
-          '<button class="btn btn-primary" onclick="window._wizNext5()">Next</button>' +
+          '<button class="btn btn-primary" onclick="window._wizNext3()">Next</button>' +
         '</div>' +
       '</div>';
     return html;
@@ -1154,27 +1030,280 @@ select option:disabled {
     renderCard();
   };
 
-  window._wizRouteField = function(recipe, field, val) {
-    if (!state.config.routing[recipe]) {
-      state.config.routing[recipe] = { from: "", to: "" };
+  window._wizNext3 = function() {
+    if (state.config.recipes.length === 0) {
+      showMsg("recipeSelectMsg", "error", "Please select at least one runner.");
+      return;
     }
+    goNext();
+  };
+
+  // ---- Step 4: Configure Runners ----
+
+  function findStatusIdByRole(role) {
+    var roleToNames = {
+      "TODO": ["to do", "todo", "open"],
+      "REFINED": ["refined", "ready for dev", "ready"],
+      "AGENT": ["agent", "selected for development"],
+      "QA": ["qa", "in review", "review", "code review"],
+      "DONE": ["done", "closed", "resolved"]
+    };
+    var names = roleToNames[role] || [];
+    for (var i = 0; i < state.discoveredStatuses.length; i++) {
+      var s = state.discoveredStatuses[i];
+      if (names.indexOf(s.name.toLowerCase()) !== -1) return s.id;
+    }
+    return "";
+  }
+
+  function statusDropdown(selectedId, onchangeAttr) {
+    var html = '<select onchange="' + onchangeAttr + '" style="font-size:13px">' +
+      '<option value="">(none)</option>';
+    for (var i = 0; i < state.discoveredStatuses.length; i++) {
+      var s = state.discoveredStatuses[i];
+      var sel = (s.id === selectedId) ? " selected" : "";
+      html += '<option value="' + escHtml(s.id) + '"' + sel + '>' + escHtml(s.name) + '</option>';
+    }
+    if (selectedId && !state.discoveredStatuses.some(function(s) { return s.id === selectedId; })) {
+      html += '<option value="' + escHtml(selectedId) + '" selected>' + escHtml(selectedId) + ' (unknown)</option>';
+    }
+    html += '</select>';
+    return html;
+  }
+
+  function renderPipeline() {
+    // Build the pipeline from the recipe routing, including human gates
+    var recipes = state.config.recipes;
+    var routing = state.config.routing;
+
+    // Define the main pipeline flow with human gates
+    // Order: refine output -> human gate -> code input -> code output -> review -> human gate -> done
+    var steps = []; // { type: "status"|"human", id, label, recipe }
+
+    // Build edges from active recipes
+    var edges = [];
+    var recipeOrder = ["refine", "code", "review"];
+    for (var i = 0; i < recipeOrder.length; i++) {
+      var rid = recipeOrder[i];
+      if (recipes.indexOf(rid) === -1) continue;
+      var route = routing[rid];
+      if (route.fromId) {
+        edges.push({ from: route.fromId, to: route.toId, recipe: rid });
+      }
+    }
+
+    if (edges.length === 0) {
+      return '<div class="pipeline"><span style="color:var(--text-muted);font-size:13px">Configure runners below to see the pipeline</span></div>';
+    }
+
+    // Build ordered node list with human gates inserted
+    var seen = {};
+    for (var ei = 0; ei < edges.length; ei++) {
+      var edge = edges[ei];
+
+      if (!seen[edge.from]) {
+        seen[edge.from] = true;
+        steps.push({ type: "status", id: edge.from });
+      }
+
+      steps.push({ type: "arrow", recipe: edge.recipe });
+
+      var toId = edge.to || edge.from; // review stays in same lane
+      if (!seen[toId]) {
+        seen[toId] = true;
+        steps.push({ type: "status", id: toId });
+      }
+
+      // Check if there's a gap between this edge's output and the next edge's input (human gate)
+      if (ei < edges.length - 1) {
+        var nextFrom = edges[ei + 1].from;
+        if (toId !== nextFrom && !seen[nextFrom]) {
+          steps.push({ type: "arrow", recipe: "human" });
+          seen[nextFrom] = true;
+          steps.push({ type: "status", id: nextFrom });
+        }
+      }
+    }
+
+    // Add final human gate to Done if we have a "Done" status discovered
+    var doneId = findStatusIdByRole("DONE");
+    if (doneId && !seen[doneId]) {
+      steps.push({ type: "arrow", recipe: "human" });
+      steps.push({ type: "status", id: doneId });
+    }
+
+    var html = '<div class="pipeline">';
+    for (var si = 0; si < steps.length; si++) {
+      var step = steps[si];
+      if (step.type === "status") {
+        html += '<div class="pipeline-node active">' + escHtml(statusName(step.id)) + '</div>';
+      } else if (step.type === "arrow") {
+        var isHuman = step.recipe === "human";
+        var labelCls = isHuman ? "arrow-label human" : "arrow-label";
+        var label = isHuman ? "you" : step.recipe;
+        html += '<div class="pipeline-arrow">' +
+          '<span class="' + labelCls + '">' + escHtml(label) + '</span>' +
+          '<div class="arrow-line"></div>' +
+        '</div>';
+      }
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function renderConfigureRecipes() {
+    var recipes = state.config.recipes;
+    var routing = state.config.routing;
+
+    var html = '<h2>Configure Runners</h2>' +
+      '<p>Set the pickup and result lanes for each runner, and the max cards per cycle.</p>' +
+      '<div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">' +
+        '<button class="btn btn-secondary" onclick="window._wizSuggestedHumanGates()" style="flex:1;min-width:200px">' +
+          'Human gates (recommended)' +
+        '</button>' +
+        '<button class="btn btn-secondary" onclick="window._wizSuggestedAutonomous()" style="flex:1;min-width:200px;position:relative">' +
+          'Fully autonomous' +
+          '<span style="font-size:10px;color:var(--warning);margin-left:6px">(WIP)</span>' +
+        '</button>' +
+      '</div>' +
+      '<div id="configMsg" class="msg"></div>';
+
+    // Pipeline diagram
+    html += renderPipeline();
+
+    // Per-recipe configuration
+    for (var i = 0; i < RUNNER_DEFS.length; i++) {
+      var r = RUNNER_DEFS[i];
+      if (recipes.indexOf(r.id) === -1) continue;
+      var route = routing[r.id];
+
+      html += '<div style="border:1px solid var(--border);border-radius:6px;padding:16px;margin-bottom:12px;background:var(--bg)">' +
+        '<div style="font-weight:600;font-size:14px;margin-bottom:12px">' + escHtml(r.name) +
+          '<span style="font-weight:400;font-size:12px;color:var(--text-muted);margin-left:8px">' + escHtml(r.desc) + '</span></div>' +
+        '<div style="display:flex;gap:12px;flex-wrap:wrap">' +
+          '<div style="flex:1;min-width:150px">' +
+            '<label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Pickup lane</label>' +
+            statusDropdown(route.fromId, "window._wizRouteField('" + r.id + "','fromId',this.value)") +
+          '</div>' +
+          '<div style="flex:1;min-width:150px">' +
+            '<label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Result lane</label>' +
+            statusDropdown(route.toId, "window._wizRouteField('" + r.id + "','toId',this.value)") +
+          '</div>' +
+          '<div style="width:120px">' +
+            '<label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Max cards</label>' +
+            '<input type="number" value="' + (route.maxCards || 5) + '" min="1" style="font-size:13px" ' +
+              'onchange="window._wizRouteField(\'' + r.id + '\',\'maxCards\',parseInt(this.value)||5)" />' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }
+
+    html += '<div class="btn-row">' +
+      backBtn() +
+      '<div class="btn-row-right">' +
+        '<button class="btn btn-primary" onclick="window._wizNext4()">Next</button>' +
+      '</div>' +
+      '</div>';
+    return html;
+  }
+
+  window._wizRouteField = function(recipe, field, val) {
     state.config.routing[recipe][field] = val;
+    renderCard();
+  };
+
+  function applySuggestedSetup(mode) {
+    var todoId = findStatusIdByRole("TODO");
+    var refinedId = findStatusIdByRole("REFINED");
+    var agentId = findStatusIdByRole("AGENT");
+    var qaId = findStatusIdByRole("QA");
+    var doneId = findStatusIdByRole("DONE");
+
+    if (!todoId || !refinedId || !agentId || !qaId) {
+      showMsg("configMsg", "error", "Could not auto-match all lanes. Your board may use different status names. Configure manually below.");
+      return;
+    }
+
+    if (mode === "human-gates") {
+      // Human gates: Refined->Agent is manual, QA->Done is manual
+      state.config.routing.refine = { fromId: todoId, toId: refinedId, maxCards: 5 };
+      state.config.routing.code = { fromId: agentId, toId: qaId, maxCards: 2 };
+      state.config.routing.review = { fromId: qaId, toId: "", maxCards: 10 };
+      state.config.routing.triage = { fromId: todoId, toId: refinedId, maxCards: 5 };
+      state.config.routing.bounce = { fromId: qaId, toId: agentId, maxCards: 10 };
+      renderCard();
+      showMsg("configMsg", "success", "Human gates setup applied. You review specs before implementation and PRs before merge.");
+    } else {
+      // Fully autonomous: everything automated end-to-end
+      state.config.routing.refine = { fromId: todoId, toId: agentId, maxCards: 5 };
+      state.config.routing.code = { fromId: agentId, toId: qaId, maxCards: 2 };
+      state.config.routing.review = { fromId: qaId, toId: doneId || "", maxCards: 10 };
+      state.config.routing.triage = { fromId: todoId, toId: agentId, maxCards: 5 };
+      state.config.routing.bounce = { fromId: qaId, toId: agentId, maxCards: 10 };
+      renderCard();
+      showMsg("configMsg", "info", "Fully autonomous setup applied. Note: auto-merge is not yet implemented -- PR merge to Done still requires a human step.");
+    }
+  }
+
+  window._wizSuggestedHumanGates = function() {
+    applySuggestedSetup("human-gates");
+  };
+
+  window._wizSuggestedAutonomous = function() {
+    applySuggestedSetup("autonomous");
+  };
+
+  window._wizNext4 = function() {
+    var recipes = state.config.recipes;
+    var routing = state.config.routing;
+    for (var i = 0; i < recipes.length; i++) {
+      var rid = recipes[i];
+      if (!routing[rid] || !routing[rid].fromId) {
+        showMsg("configMsg", "error", "Please set a pickup lane for " + rid + ".");
+        return;
+      }
+    }
+    goNext();
+  };
+
+  // ---- Step 5: Git Settings ----
+
+  function renderGit() {
+    var c = state.config;
+    var html = '<h2>Git Settings</h2>' +
+      '<p>Configure version control and polling parameters.</p>' +
+      '<div class="form-group">' +
+        '<label for="baseBranch">Base Branch</label>' +
+        '<span class="hint">Feature branches will be created from this branch</span>' +
+        '<input type="text" id="baseBranch" value="' + escHtml(c.baseBranch) + '" onchange="window._wizGitField(\'baseBranch\', this.value)" />' +
+      '</div>' +
+      '<div class="form-group">' +
+        '<label for="pollInterval">Poll Interval (minutes)</label>' +
+        '<span class="hint">How often the runner checks for new cards</span>' +
+        '<input type="number" id="pollInterval" value="' + c.pollInterval + '" min="1" onchange="window._wizGitField(\'pollInterval\', parseInt(this.value) || 60)" />' +
+      '</div>' +
+      '<div class="btn-row">' +
+        backBtn() +
+        '<div class="btn-row-right">' +
+          '<button class="btn btn-primary" onclick="window._wizNext5()">Next</button>' +
+        '</div>' +
+      '</div>';
+    return html;
+  }
+
+  window._wizGitField = function(field, val) {
+    state.config[field] = val;
   };
 
   window._wizNext5 = function() {
-    if (state.config.recipes.length === 0) {
-      showMsg("recipeMsg", "error", "Please select at least one recipe.");
+    var c = state.config;
+    if (!c.baseBranch) {
+      alert("Base branch is required.");
       return;
     }
-    // Validate that enabled recipes have a FROM lane
-    var routing = state.config.routing;
-    for (var i = 0; i < state.config.recipes.length; i++) {
-      var id = state.config.recipes[i];
-      var route = routing[id];
-      if (!route || !route.from) {
-        showMsg("recipeMsg", "error", "Please set a 'Read from' lane for " + id + ".");
-        return;
-      }
+    if (c.pollInterval < 1) {
+      alert("Poll interval must be at least 1 minute.");
+      return;
     }
     goNext();
   };
@@ -1198,43 +1327,32 @@ select option:disabled {
         '<tr><td>Project Key</td><td>' + escHtml(c.projectKey) + '</td></tr>' +
       '</table></div>';
 
-    // Lanes
-    html += '<div class="summary-section">' +
-      '<h3>Lane Mapping</h3>' +
-      '<table class="summary-table">';
-    for (var i = 0; i < LANE_DEFS.length; i++) {
-      var ldef = LANE_DEFS[i];
-      var lane = c.lanes[ldef.key] || {};
-      if (lane.statusId || lane.transitionId) {
-        html += '<tr><td>' + escHtml(ldef.label) + '</td><td>Status: ' + escHtml(lane.statusId || "-") + ', Transition: ' + escHtml(lane.transitionId || "-") + '</td></tr>';
-      }
-    }
-    html += '</table></div>';
-
     // Git settings
     html += '<div class="summary-section">' +
       '<h3>Git Settings</h3>' +
       '<table class="summary-table">' +
         '<tr><td>Base Branch</td><td>' + escHtml(c.baseBranch) + '</td></tr>' +
         '<tr><td>Poll Interval</td><td>' + c.pollInterval + ' minutes</td></tr>' +
-        '<tr><td>Max Refine Cards</td><td>' + c.maxRefineCards + '</td></tr>' +
-        '<tr><td>Max Code Cards</td><td>' + c.maxCodeCards + '</td></tr>' +
       '</table></div>';
 
     // Recipes & routing
     html += '<div class="summary-section">' +
-      '<h3>Recipes</h3>' +
+      '<h3>Runners</h3>' +
       '<table class="summary-table">';
     for (var ri = 0; ri < (c.recipes || []).length; ri++) {
       var rid = c.recipes[ri];
       var route = (c.routing || {})[rid] || {};
-      var arrow = route.to ? ' --> ' + route.to : ' (stays)';
-      html += '<tr><td>' + escHtml(rid) + '</td><td>' + escHtml(route.from || '?') + escHtml(arrow) + '</td></tr>';
-    }
-    if (!c.recipes || c.recipes.length === 0) {
-      html += '<tr><td>Enabled</td><td>none</td></tr>';
+      var fromName = statusName(route.fromId);
+      var toName = route.toId ? statusName(route.toId) : "(stays)";
+      html += '<tr><td>' + escHtml(rid) + '</td><td>' +
+        escHtml(fromName) + ' &rarr; ' + escHtml(toName) +
+        ' &nbsp; (max: ' + (route.maxCards || '?') + ')' +
+        '</td></tr>';
     }
     html += '</table></div>';
+
+    // Pipeline
+    html += renderPipeline();
 
     html += '<div id="saveMsg" class="msg"></div>' +
       '<div class="btn-row">' +
@@ -1259,27 +1377,33 @@ select option:disabled {
         BOARD_EMAIL: c.email,
         GIT_BASE_BRANCH: c.baseBranch,
         POLL_INTERVAL: String((c.pollInterval || 60) * 60),
-        MAX_CARDS_REFINE: String(c.maxRefineCards || 5),
-        MAX_CARDS_CODE: String(c.maxCodeCards || 2),
-        RECIPES_ENABLED: (c.recipes || []).join(",")
+        RUNNERS_ENABLED: (c.recipes || []).join(",")
       };
-      // Add recipe lane routing
-      var routing = c.routing || {};
-      var routeKeys = Object.keys(routing);
-      for (var r = 0; r < routeKeys.length; r++) {
-        var rid = routeKeys[r].toUpperCase();
-        var route = routing[routeKeys[r]];
-        if (route.from) env["RECIPE_" + rid + "_FROM"] = route.from;
-        env["RECIPE_" + rid + "_TO"] = route.to || "";
+
+      // Add per-recipe routing and max cards
+      var recipeIds = ["refine", "code", "review", "triage", "bounce"];
+      for (var i = 0; i < recipeIds.length; i++) {
+        var rid = recipeIds[i];
+        var upper = rid.toUpperCase();
+        var route = c.routing[rid];
+        env["RUNNER_" + upper + "_FROM"] = route.fromId || "";
+        env["RUNNER_" + upper + "_TO"] = route.toId || "";
+        env["MAX_CARDS_" + upper] = String(route.maxCards || 5);
       }
+
+      // Build adapter config
       var adapterConfig = {};
-      var laneKeys = Object.keys(c.lanes);
-      for (var i = 0; i < laneKeys.length; i++) {
-        var key = laneKeys[i];
-        var lane = c.lanes[key];
-        if (lane.statusId) adapterConfig["STATUS_" + key] = lane.statusId;
-        if (lane.transitionId) adapterConfig["TRANSITION_" + key] = lane.transitionId;
+      for (var s = 0; s < state.discoveredStatuses.length; s++) {
+        var status = state.discoveredStatuses[s];
+        adapterConfig["STATUS_" + status.id] = status.name;
       }
+      for (var t = 0; t < state.discoveredTransitions.length; t++) {
+        var trans = state.discoveredTransitions[t];
+        if (trans.toId && trans.id) {
+          adapterConfig["TRANSITION_TO_" + trans.toId] = trans.id;
+        }
+      }
+
       var result = await apiPost("/api/save-config", {
         adapter: c.adapter,
         env: env,
@@ -1296,7 +1420,7 @@ select option:disabled {
     }
   };
 
-  // ---- Step 7: Running ----
+  // ---- Step 7: Runner Dashboard ----
 
   function renderRunning() {
     var r = state.runner;
@@ -1316,26 +1440,72 @@ select option:disabled {
       '<div class="dashboard-controls">';
 
     if (!r.running) {
-      html += '<button class="btn btn-success" onclick="window._wizStartRunner()">Start Runner</button>';
+      html += '<button class="btn btn-success" onclick="window._wizStartRunner(false)">Start Runner</button>' +
+        '<button class="btn btn-secondary" onclick="window._wizStartRunner(true)" title="Run without a visible window">Start in Background</button>';
     } else {
       html += '<button class="btn btn-danger" onclick="window._wizStopRunner()">Stop Runner</button>';
     }
 
     html += '<button class="btn btn-secondary" onclick="window._wizCheckStatus()">Refresh Status</button>' +
       '</div>' +
-      '<div id="runnerMsg" class="msg"></div>' +
-      '<div class="btn-row">' +
-        backBtn() +
-        '<span></span>' +
+      '<div id="runnerMsg" class="msg"></div>';
+
+    // Run without wizard
+    html += '<div style="margin-top:24px">' +
+      '<h3 style="font-size:15px;font-weight:600;color:var(--accent);margin-bottom:12px">Run Without the Wizard</h3>' +
+      '<p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">' +
+        'Start the runner directly without the setup wizard:</p>' +
+      '<div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;font-family:monospace;font-size:13px;margin-bottom:16px">' +
+        '<div><strong>Windows:</strong> run.bat</div>' +
+        '<div><strong>macOS / Linux:</strong> bash run.sh</div>' +
+      '</div>' +
+      '</div>';
+
+    // Scheduling instructions
+    html += '<div style="margin-top:16px">' +
+      '<h3 style="font-size:15px;font-weight:600;color:var(--accent);margin-bottom:12px">Schedule Automatic Runs</h3>' +
+      '<details style="margin-bottom:12px">' +
+        '<summary style="cursor:pointer;font-weight:600;font-size:14px;color:var(--text)">Windows (Task Scheduler)</summary>' +
+        '<div style="padding:12px;font-size:13px;color:var(--text-muted)">' +
+          '<ol style="padding-left:20px;line-height:2">' +
+            '<li>Open Task Scheduler (<code style="background:var(--bg);padding:2px 6px;border-radius:3px">taskschd.msc</code>)</li>' +
+            '<li>Click "Create Basic Task"</li>' +
+            '<li>Set trigger: "When the computer starts" or a schedule</li>' +
+            '<li>Set action: Start a program</li>' +
+            '<li>Program: <code style="background:var(--bg);padding:2px 6px;border-radius:3px">cmd</code></li>' +
+            '<li>Arguments: <code style="background:var(--bg);padding:2px 6px;border-radius:3px">/c "cd /d YOUR_PROJECT_PATH &amp;&amp; run.bat"</code></li>' +
+          '</ol>' +
+        '</div>' +
+      '</details>' +
+      '<details style="margin-bottom:12px">' +
+        '<summary style="cursor:pointer;font-weight:600;font-size:14px;color:var(--text)">macOS (launchd)</summary>' +
+        '<div style="padding:12px;font-size:13px;color:var(--text-muted)">' +
+          '<p>Create <code style="background:var(--bg);padding:2px 6px;border-radius:3px">~/Library/LaunchAgents/fit.sorta.runner.plist</code></p>' +
+          '<p style="margin-top:8px">Set <code>ProgramArguments</code> to <code>["bash", "YOUR_PROJECT_PATH/run.sh"]</code> with <code>RunAtLoad</code> = true.</p>' +
+          '<p style="margin-top:8px">Load it: <code style="background:var(--bg);padding:2px 6px;border-radius:3px">launchctl load ~/Library/LaunchAgents/fit.sorta.runner.plist</code></p>' +
+        '</div>' +
+      '</details>' +
+      '<details style="margin-bottom:12px">' +
+        '<summary style="cursor:pointer;font-weight:600;font-size:14px;color:var(--text)">Linux (cron)</summary>' +
+        '<div style="padding:12px;font-size:13px;color:var(--text-muted)">' +
+          '<p>Run <code style="background:var(--bg);padding:2px 6px;border-radius:3px">crontab -e</code> and add:</p>' +
+          '<pre style="background:var(--bg);padding:8px;border-radius:4px;margin:8px 0;border:1px solid var(--border)">@reboot cd YOUR_PROJECT_PATH &amp;&amp; bash run.sh</pre>' +
+        '</div>' +
+      '</details>' +
+      '</div>';
+
+    html += '<div class="btn-row">' +
+      backBtn() +
+      '<span></span>' +
       '</div>';
     return html;
   }
 
-  window._wizStartRunner = async function() {
+  window._wizStartRunner = async function(background) {
     hideMsg("runnerMsg");
     showMsg("runnerMsg", "info", "Starting runner...");
     try {
-      var data = await apiPost("/api/start-runner");
+      var data = await apiPost("/api/start-runner", { background: !!background });
       state.runner.running = true;
       state.runner.pid = data.pid || null;
       renderCard();
@@ -1402,9 +1572,9 @@ select option:disabled {
     renderWelcome,
     renderDeps,
     renderBoard,
-    renderLanes,
+    renderSelectRecipes,
+    renderConfigureRecipes,
     renderGit,
-    renderRecipes,
     renderReview,
     renderRunning
   ];
@@ -1417,19 +1587,16 @@ select option:disabled {
     renderStepIndicator();
     renderCard();
 
-    // Auto-trigger dependency check when entering step 1
     if (state.currentStep === 1 && !state.deps) {
       window._wizCheckDeps();
     }
 
-    // Start polling if returning to running step and runner is active
     if (state.currentStep === 7 && state.runner.running) {
       startStatusPolling();
     } else if (state.currentStep !== 7) {
       stopStatusPolling();
     }
 
-    // Auto-check runner status when entering step 7
     if (state.currentStep === 7) {
       window._wizCheckStatus();
     }
@@ -1437,11 +1604,10 @@ select option:disabled {
 
   // ---- Init ----
 
-  // Detect file:// protocol and warn the user
   if (window.location.protocol === "file:") {
     document.getElementById("wizardCard").innerHTML =
       '<h2>Server Not Running</h2>' +
-      '<p>This page was opened directly from the file system. The setup wizard needs its server running to check dependencies, test connections, and save configuration.</p>' +
+      '<p>This page was opened directly from the file system. The setup wizard needs its server running.</p>' +
       '<p style="margin-top:16px"><strong>To start the server:</strong></p>' +
       '<p><strong>Windows:</strong> Double-click <code style="background:var(--bg);padding:2px 6px;border-radius:3px">setup.bat</code></p>' +
       '<p><strong>macOS / Linux:</strong> Run <code style="background:var(--bg);padding:2px 6px;border-radius:3px">bash setup.sh</code></p>' +
@@ -1449,7 +1615,60 @@ select option:disabled {
     return;
   }
 
-  render();
+  // Load existing config before rendering
+  (async function() {
+    try {
+      var data = await apiPost("/api/load-config");
+      if (data.success && data.env) {
+        var env = data.env;
+        state.config.adapter = env.BOARD_ADAPTER || "jira";
+        state.config.domain = env.BOARD_DOMAIN || "";
+        state.config.email = env.BOARD_EMAIL || "";
+        state.config.apiToken = env.BOARD_API_TOKEN || "";
+        state.config.projectKey = env.BOARD_PROJECT_KEY || "";
+        state.config.baseBranch = env.GIT_BASE_BRANCH || "main";
+        state.config.pollInterval = env.POLL_INTERVAL ? Math.round(parseInt(env.POLL_INTERVAL) / 60) : 60;
+
+        if (env.RUNNERS_ENABLED) {
+          state.config.recipes = env.RUNNERS_ENABLED.split(",").map(function(s) { return s.trim(); });
+        }
+
+        var recipeIds = ["refine", "code", "review", "triage", "bounce"];
+        for (var i = 0; i < recipeIds.length; i++) {
+          var rid = recipeIds[i];
+          var upper = rid.toUpperCase();
+          var fromKey = "RUNNER_" + upper + "_FROM";
+          var toKey = "RUNNER_" + upper + "_TO";
+          var maxKey = "MAX_CARDS_" + upper;
+          if (env[fromKey]) state.config.routing[rid].fromId = env[fromKey];
+          if (env[toKey]) state.config.routing[rid].toId = env[toKey];
+          if (env[maxKey]) state.config.routing[rid].maxCards = parseInt(env[maxKey]) || state.config.routing[rid].maxCards;
+        }
+
+        if (data.statuses && data.statuses.length > 0) {
+          state.discoveredStatuses = data.statuses;
+          state.boardDiscovered = true;
+          state.connectionTested = true;
+        }
+        if (data.transitions && data.transitions.length > 0) {
+          state.discoveredTransitions = data.transitions.map(function(t) {
+            return { id: t.transitionId, name: "", toName: "", toId: t.statusId };
+          });
+        }
+      }
+    } catch(e) {
+      // No existing config -- proceed with defaults
+    }
+
+    // Allow jumping to a step via URL parameter: ?step=7
+    var params = new URLSearchParams(window.location.search);
+    var stepParam = parseInt(params.get("step"));
+    if (stepParam >= 0 && stepParam < STEPS.length) {
+      state.currentStep = stepParam;
+    }
+
+    render();
+  })();
 
 })();
 </script>

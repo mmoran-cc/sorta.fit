@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Recipe: Bounce — move cards with rejected PRs back for rework
+# Runner: Bounce — moves rejected PRs back for rework
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,14 +11,14 @@ source "$SORTA_ROOT/adapters/${BOARD_ADAPTER}.sh"
 
 GH_CMD=$(find_gh)
 MAX_BOUNCES="${MAX_BOUNCES:-3}"
-BOUNCE_ESCALATE_TO="${RECIPE_BOUNCE_ESCALATE:-}"
+BOUNCE_ESCALATE_TO="${RUNNER_BOUNCE_ESCALATE:-}"
 
-log_info "Bounce: checking $RECIPE_BOUNCE_FROM lane for rejected PRs..."
+log_info "Bounce: checking $RUNNER_BOUNCE_FROM lane for rejected PRs..."
 
-ISSUE_IDS=$(board_get_cards_in_status "$RECIPE_BOUNCE_FROM" "$MAX_CARDS_BOUNCE")
+ISSUE_IDS=$(board_get_cards_in_status "$RUNNER_BOUNCE_FROM" "$MAX_CARDS_BOUNCE")
 
 if [[ -z "$ISSUE_IDS" ]]; then
-  log_info "No cards in $RECIPE_BOUNCE_FROM. Nothing to bounce."
+  log_info "No cards in $RUNNER_BOUNCE_FROM. Nothing to bounce."
   exit 0
 fi
 
@@ -93,10 +93,10 @@ $REVIEW_COMMENTS"
 
   board_add_comment "$ISSUE_KEY" "$BOUNCE_MSG"
 
-  if [[ -n "$RECIPE_BOUNCE_TO" ]]; then
-    local_transition="TRANSITION_TO_${RECIPE_BOUNCE_TO}"
+  if [[ -n "$RUNNER_BOUNCE_TO" ]]; then
+    local_transition="TRANSITION_TO_${RUNNER_BOUNCE_TO}"
     board_transition "$ISSUE_KEY" "${!local_transition}"
-    log_info "Done: $ISSUE_KEY bounced to $RECIPE_BOUNCE_TO for rework"
+    log_info "Done: $ISSUE_KEY bounced to $RUNNER_BOUNCE_TO for rework"
   else
     log_info "Done: $ISSUE_KEY bounced (no transition configured)"
   fi

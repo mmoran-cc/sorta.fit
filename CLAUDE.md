@@ -11,45 +11,54 @@ Sorta.Fit is an AI-powered sprint automation system that connects issue boards (
 ## Running the System
 
 ```bash
-# Start the polling loop (main entry point)
-bash core/runner.sh
+# Start the runner directly (no setup wizard)
+bash run.sh            # macOS/Linux
+run.bat                # Windows (double-click)
 
-# Run a single recipe manually
-bash recipes/refine.sh
-bash recipes/code.sh
-bash recipes/review.sh
-bash recipes/triage.sh
-bash recipes/bounce.sh
+# Start the polling loop (core entry point)
+bash core/loop.sh
+
+# Run a single runner manually
+bash runners/refine.sh
+bash runners/code.sh
+bash runners/review.sh
+bash runners/triage.sh
+bash runners/bounce.sh
 
 # Generate release notes (manual, not part of the loop)
-bash recipes/release-notes.sh <since-tag-or-date> [output-file]
+bash runners/release-notes.sh <since-tag-or-date> [output-file]
 
 # Launch the setup wizard (web UI on port 3456)
 bash setup.sh          # macOS/Linux
 setup.bat              # Windows (double-click)
 ```
 
-There is no automated test suite. Testing is manual: create a test project on the board and run recipes individually.
+There is no automated test suite. Testing is manual: create a test project on the board and run runners individually.
 
 ## Architecture
 
 ### Core Loop
 
-`core/runner.sh` → loads config (`core/config.sh`) → validates dependencies → acquires `.automation.lock` → runs enabled recipes in sequence → sleeps `POLL_INTERVAL` → repeats. `core/utils.sh` provides logging, lock management, template rendering (`{{KEY}}` substitution via Node.js), and git helpers.
+`core/loop.sh` → loads config (`core/config.sh`) → validates dependencies → acquires `.automation.lock` → runs enabled runners in sequence → sleeps `POLL_INTERVAL` → repeats. `core/utils.sh` provides logging, lock management, template rendering (`{{KEY}}` substitution via Node.js), and git helpers.
 
 ### Adapter Layer
 
-Adapters in `adapters/` implement a standard `board_*` function interface, making the system board-agnostic. Each adapter has a companion `*.config.sh` for status/transition IDs.
+Adapters in `adapters/` implement a standard `board_*` function interface, making the system board-agnostic. Each adapter has a companion `*.config.sh` that stores an ID-driven mapping of statuses and transitions.
 
-**Interface:** `board_get_cards_in_status`, `board_get_card_key`, `board_get_card_title`, `board_get_card_description`, `board_get_card_comments`, `board_update_description`, `board_add_comment`, `board_transition`, `board_discover`.
+**Adapter config format** (`adapters/jira.config.sh`):
+- `STATUS_<id>="Display Name"` — maps Jira status IDs to human-readable names
+- `TRANSITION_TO_<statusId>=<transitionId>` — maps target status IDs to the transition ID needed to move a card there
+
+**Interface:** `board_get_cards_in_status` (takes status ID), `board_get_card_key`, `board_get_card_title`, `board_get_card_description`, `board_get_card_comments`, `board_update_description`, `board_add_comment`, `board_transition` (takes transition ID), `board_discover`.
 
 Currently implemented: Jira Cloud (`adapters/jira.sh`). Linear and GitHub Issues are planned.
 
-### Recipes
+### Runners
 
-Each recipe in `recipes/` follows the same pattern: query cards from a source lane → fetch details → render a prompt from `prompts/*.md` → pass to Claude Code CLI (`claude -p`) → update the board → transition the card.
+Each runner in `runners/` follows the same pattern: query cards from a source lane → fetch details → render a prompt from `prompts/*.md` → pass to Claude Code CLI (`claude -p`) → update the board → transition the card.
 
 - **refine** — Generates structured specs from raw cards (To Do → Refined)
+- **architect** — Analyzes codebase architecture and produces implementation plans (Refined → Architected)
 - **code** — Creates branch, worktree, runs Claude for implementation, opens PR (Agent → QA)
 - **review** — Fetches PR diff, runs Claude review, posts verdict to GitHub (QA lane)
 - **triage** — Analyzes bug reports, appends root-cause analysis (To Do → Refined)
@@ -70,17 +79,19 @@ Each recipe in `recipes/` follows the same pattern: query cards from a source la
 
 ## Safety Invariants
 
-- The `code` recipe uses **isolated git worktrees** (`.worktrees/`); the main working tree is never modified
-- Branches named `main`, `master`, `dev`, `develop` are **never checked out** by recipes
+- The `code` runner uses **isolated git worktrees** (`.worktrees/`); the main working tree is never modified
+- Branches named `main`, `master`, `dev`, `develop` are **never checked out** by runners
 - AI-created branches are always prefixed `claude/{ISSUE_KEY}-{slug}`
 - No `git push --force` or destructive git operations
 - `.automation.lock` prevents overlapping polling cycles
 
 ## Extension Points
 
-- **New recipe:** Create `recipes/{name}.sh` + `prompts/{name}.md`, add to `RECIPES_ENABLED` in `.env`
+- **New runner:** Create `runners/{name}.sh` + `prompts/{name}.md`, add to `RUNNERS_ENABLED` in `.env`
 - **New adapter:** Create `adapters/{name}.sh` implementing all `board_*` functions + `adapters/{name}.config.sh.example`
 
 ## Configuration
 
-All config lives in `.env` (see `.env.example`). Key variables: `BOARD_ADAPTER`, `BOARD_DOMAIN`, `BOARD_API_TOKEN`, `BOARD_PROJECT_KEY`, `GIT_BASE_BRANCH`, `POLL_INTERVAL`, `RECIPES_ENABLED`, and per-recipe `MAX_CARDS_*` / `RECIPE_*_FROM` / `RECIPE_*_TO` lane routing.
+All config lives in `.env` (see `.env.example`). Key variables: `BOARD_ADAPTER`, `BOARD_DOMAIN`, `BOARD_API_TOKEN`, `BOARD_PROJECT_KEY`, `GIT_BASE_BRANCH`, `POLL_INTERVAL`, `RUNNERS_ENABLED`, and per-runner `MAX_CARDS_*` / `RUNNER_*_FROM` / `RUNNER_*_TO` lane routing.
+
+Runner lane routing uses **Jira status IDs** (not names). `RUNNER_*_FROM` is the status ID to query cards from; `RUNNER_*_TO` is the status ID to transition cards to (resolved via `TRANSITION_TO_<id>` in the adapter config). Run the setup wizard to discover your board's IDs.

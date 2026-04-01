@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Recipe: Code cards from Agent lane -> branch -> PR -> QA
+# Runner: Code — implements cards in isolated worktrees
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,12 +12,12 @@ source "$SORTA_ROOT/adapters/${BOARD_ADAPTER}.sh"
 PROTECTED_BRANCHES="main master dev develop"
 WORKTREE_DIR="$SORTA_ROOT/.worktrees"
 
-log_info "Coder: checking $RECIPE_CODE_FROM lane..."
+log_info "Coder: checking $RUNNER_CODE_FROM lane..."
 
-ISSUE_IDS=$(board_get_cards_in_status "$RECIPE_CODE_FROM" "$MAX_CARDS_CODE")
+ISSUE_IDS=$(board_get_cards_in_status "$RUNNER_CODE_FROM" "$MAX_CARDS_CODE")
 
 if [[ -z "$ISSUE_IDS" ]]; then
-  log_info "No cards in $RECIPE_CODE_FROM. Nothing to code."
+  log_info "No cards in $RUNNER_CODE_FROM. Nothing to code."
   exit 0
 fi
 
@@ -148,8 +148,8 @@ PREOF
     --head "$BRANCH_NAME" 2>&1) || {
     log_error "PR creation failed for $ISSUE_KEY: $PR_URL"
     board_add_comment "$ISSUE_KEY" "Sorta.Fit: branch pushed but PR creation failed on $(date '+%Y-%m-%d %H:%M'). Branch: $BRANCH_NAME"
-    if [[ -n "$RECIPE_CODE_TO" ]]; then
-      local_transition="TRANSITION_TO_${RECIPE_CODE_TO}"
+    if [[ -n "$RUNNER_CODE_TO" ]]; then
+      local_transition="TRANSITION_TO_${RUNNER_CODE_TO}"
       board_transition "$ISSUE_KEY" "${!local_transition}"
     fi
     git worktree remove "$CARD_WORKTREE" --force 2>/dev/null || true
@@ -162,10 +162,10 @@ PREOF
 
   board_add_comment "$ISSUE_KEY" "PR opened: $PR_URL — Sorta.Fit $(date '+%Y-%m-%d %H:%M')"
 
-  if [[ -n "$RECIPE_CODE_TO" ]]; then
-    local_transition="TRANSITION_TO_${RECIPE_CODE_TO}"
+  if [[ -n "$RUNNER_CODE_TO" ]]; then
+    local_transition="TRANSITION_TO_${RUNNER_CODE_TO}"
     board_transition "$ISSUE_KEY" "${!local_transition}"
-    log_info "Done: $ISSUE_KEY implemented and moved to $RECIPE_CODE_TO"
+    log_info "Done: $ISSUE_KEY implemented and moved to $RUNNER_CODE_TO"
   else
     log_info "Done: $ISSUE_KEY implemented (no transition configured)"
   fi

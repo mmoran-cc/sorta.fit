@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Recipe: Triage bug reports
+# Runner: Triage — analyzes bug reports
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,12 +9,12 @@ source "$SORTA_ROOT/core/config.sh"
 source "$SORTA_ROOT/core/utils.sh"
 source "$SORTA_ROOT/adapters/${BOARD_ADAPTER}.sh"
 
-log_info "Triage: checking $RECIPE_TRIAGE_FROM lane for bugs..."
+log_info "Triage: checking $RUNNER_TRIAGE_FROM lane for bugs..."
 
-ISSUE_IDS=$(board_get_cards_in_status "$RECIPE_TRIAGE_FROM" "$MAX_CARDS_TRIAGE")
+ISSUE_IDS=$(board_get_cards_in_status "$RUNNER_TRIAGE_FROM" "$MAX_CARDS_TRIAGE")
 
 if [[ -z "$ISSUE_IDS" ]]; then
-  log_info "No cards in $RECIPE_TRIAGE_FROM to triage."
+  log_info "No cards in $RUNNER_TRIAGE_FROM to triage."
   exit 0
 fi
 
@@ -57,10 +57,10 @@ $TRIAGE"
   board_update_description "$ISSUE_KEY" "$UPDATED_DESC"
   board_add_comment "$ISSUE_KEY" "Bug triaged by Sorta.Fit on $(date '+%Y-%m-%d %H:%M')."
 
-  if [[ -n "$RECIPE_TRIAGE_TO" ]]; then
-    local_transition="TRANSITION_TO_${RECIPE_TRIAGE_TO}"
+  if [[ -n "$RUNNER_TRIAGE_TO" ]]; then
+    local_transition="TRANSITION_TO_${RUNNER_TRIAGE_TO}"
     board_transition "$ISSUE_KEY" "${!local_transition}"
-    log_info "Done: $ISSUE_KEY triaged and moved to $RECIPE_TRIAGE_TO"
+    log_info "Done: $ISSUE_KEY triaged and moved to $RUNNER_TRIAGE_TO"
   else
     log_info "Done: $ISSUE_KEY triaged (no transition configured)"
   fi

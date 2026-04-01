@@ -2,5 +2,7 @@ node_modules/
 .env
 .automation.lock
 .worktrees/
+.claude/
 dist/
 *.log
+runner.log

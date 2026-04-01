@@ -122,6 +122,54 @@ function openBrowser(url) {
 
 // ─── API Handlers ───────────────────────────────────────────────────
 
+async function handleLoadConfig(req, res) {
+  const envPath = path.join(PROJECT_ROOT, '.env');
+  const env = {};
+
+  if (fs.existsSync(envPath)) {
+    const lines = fs.readFileSync(envPath, 'utf-8').split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIndex = trimmed.indexOf('=');
+      if (eqIndex === -1) continue;
+      const key = trimmed.substring(0, eqIndex);
+      let value = trimmed.substring(eqIndex + 1);
+      if ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      env[key] = value;
+    }
+  }
+
+  const adapter = env.BOARD_ADAPTER || 'jira';
+  const adapterConfigPath = path.join(PROJECT_ROOT, 'adapters', `${adapter}.config.sh`);
+  const statuses = [];
+  const transitions = [];
+
+  if (fs.existsSync(adapterConfigPath)) {
+    const configLines = fs.readFileSync(adapterConfigPath, 'utf-8').split(/\r?\n/);
+    for (const line of configLines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+
+      const statusMatch = trimmed.match(/^STATUS_(\d+)=["']?(.+?)["']?$/);
+      if (statusMatch) {
+        statuses.push({ id: statusMatch[1], name: statusMatch[2] });
+        continue;
+      }
+
+      const transMatch = trimmed.match(/^TRANSITION_TO_(\d+)=(\d+)$/);
+      if (transMatch) {
+        transitions.push({ statusId: transMatch[1], transitionId: transMatch[2] });
+      }
+    }
+  }
+
+  sendJSON(res, 200, { success: true, env, statuses, transitions });
+}
+
 async function handleCheckDependencies(req, res) {
   const deps = ['git', 'node', 'claude', 'gh'];
   const results = [];
@@ -154,6 +202,29 @@ async function handleCheckDependencies(req, res) {
     }
 
     results.push({ name, found, version, path: depPath });
+  }
+
+  // On Windows, verify git-bash.exe exists (needed for runner terminal)
+  if (process.platform === 'win32') {
+    const gitBashPaths = [
+      'C:\\Program Files\\Git\\git-bash.exe',
+      'C:\\Program Files (x86)\\Git\\git-bash.exe',
+    ];
+    let gitBashFound = false;
+    let gitBashPath = '';
+    for (const p of gitBashPaths) {
+      if (fs.existsSync(p)) {
+        gitBashFound = true;
+        gitBashPath = p;
+        break;
+      }
+    }
+    results.push({
+      name: 'git-bash',
+      found: gitBashFound,
+      version: gitBashFound ? 'found' : 'not found',
+      path: gitBashPath,
+    });
   }
 
   sendJSON(res, 200, { dependencies: results });
@@ -351,30 +422,36 @@ async function handleDiscoverBoard(req, res) {
       }
       const statuses = Array.from(statusMap.values());
 
-      // 2. Fetch transitions from a sample issue
-      let transitions = [];
-      try {
-        // Find any issue in the project
-        const searchResult = await jiraPost('/rest/api/3/search/jql', {
-          jql: `project=${projectKey} ORDER BY rank ASC`,
-          maxResults: 1,
-        });
-
-        if (searchResult.statusCode === 200 && searchResult.data.issues && searchResult.data.issues.length > 0) {
-          const issueKey = searchResult.data.issues[0].key;
-          const transResult = await jiraGet(`/rest/api/3/issue/${issueKey}/transitions`);
-
-          if (transResult.statusCode === 200 && transResult.data.transitions) {
-            transitions = transResult.data.transitions.map((t) => ({
-              id: t.id,
-              name: t.name,
-              to: t.to ? t.to.name : 'unknown',
-            }));
+      // 2. Fetch transitions from issues across multiple statuses
+      const transitionMap = new Map();
+      for (const status of statuses.slice(0, 10)) {
+        try {
+          const searchResult = await jiraPost('/rest/api/3/search/jql', {
+            jql: `project=${projectKey} AND status=${status.id} ORDER BY rank ASC`,
+            maxResults: 1,
+          });
+          if (searchResult.statusCode === 200 && searchResult.data.issues && searchResult.data.issues.length > 0) {
+            const issueKey = searchResult.data.issues[0].key;
+            const transResult = await jiraGet(`/rest/api/3/issue/${issueKey}/transitions`);
+            if (transResult.statusCode === 200 && transResult.data.transitions) {
+              for (const t of transResult.data.transitions) {
+                const toId = t.to ? t.to.id : null;
+                if (toId && !transitionMap.has(toId)) {
+                  transitionMap.set(toId, {
+                    id: t.id,
+                    name: t.name,
+                    toName: t.to ? t.to.name : 'unknown',
+                    toId: toId,
+                  });
+                }
+              }
+            }
           }
+        } catch {
+          // Continue to next status
         }
-      } catch {
-        // Transitions are best-effort; statuses are more important
       }
+      const transitions = Array.from(transitionMap.values());
 
       sendJSON(res, 200, { success: true, statuses, transitions });
     } catch (err) {
@@ -394,31 +471,96 @@ async function handleSaveConfig(req, res) {
   }
 
   try {
-    // 1. Write .env file to project root
-    const envLines = ['# Sorta.Fit configuration', '# Generated by setup wizard', ''];
-    for (const [key, value] of Object.entries(env)) {
-      // Quote values that contain spaces or special characters
-      const needsQuotes = /[\s#=]/.test(String(value));
-      envLines.push(`${key}=${needsQuotes ? '"' + value + '"' : value}`);
-    }
-    envLines.push('');
+    // 1. Write .env file to project root with human-readable comments
+    const e = env;
+    const q = (v) => /[\s#=]/.test(String(v)) ? `"${v}"` : v;
+    const envContent = `# Sorta.Fit -- Environment Configuration
+# Generated by setup wizard on ${new Date().toISOString().split('T')[0]}
+# Do NOT commit .env to version control.
+
+# =============================================================================
+# Board Connection
+# =============================================================================
+
+BOARD_ADAPTER=${q(e.BOARD_ADAPTER || '')}
+BOARD_DOMAIN=${q(e.BOARD_DOMAIN || '')}
+BOARD_API_TOKEN=${q(e.BOARD_API_TOKEN || '')}
+BOARD_PROJECT_KEY=${q(e.BOARD_PROJECT_KEY || '')}
+BOARD_EMAIL=${q(e.BOARD_EMAIL || '')}
+
+# =============================================================================
+# Git
+# =============================================================================
+
+GIT_BASE_BRANCH=${q(e.GIT_BASE_BRANCH || 'main')}
+
+# =============================================================================
+# Runner Behavior
+# =============================================================================
+
+# Seconds between polling cycles
+POLL_INTERVAL=${e.POLL_INTERVAL || '3600'}
+
+# Maximum cards per cycle for each runner
+MAX_CARDS_REFINE=${e.MAX_CARDS_REFINE || '5'}
+MAX_CARDS_CODE=${e.MAX_CARDS_CODE || '2'}
+MAX_CARDS_REVIEW=${e.MAX_CARDS_REVIEW || '10'}
+MAX_CARDS_TRIAGE=${e.MAX_CARDS_TRIAGE || '5'}
+MAX_CARDS_BOUNCE=${e.MAX_CARDS_BOUNCE || '10'}
+
+# Comma-separated list of runners to run
+RUNNERS_ENABLED=${e.RUNNERS_ENABLED || 'refine,code'}
+
+# =============================================================================
+# Recipe Lane Routing (status IDs from your board)
+# =============================================================================
+
+RUNNER_REFINE_FROM=${e.RUNNER_REFINE_FROM || ''}
+RUNNER_REFINE_TO=${e.RUNNER_REFINE_TO || ''}
+
+RUNNER_CODE_FROM=${e.RUNNER_CODE_FROM || ''}
+RUNNER_CODE_TO=${e.RUNNER_CODE_TO || ''}
+
+RUNNER_REVIEW_FROM=${e.RUNNER_REVIEW_FROM || ''}
+RUNNER_REVIEW_TO=${e.RUNNER_REVIEW_TO || ''}
+
+RUNNER_TRIAGE_FROM=${e.RUNNER_TRIAGE_FROM || ''}
+RUNNER_TRIAGE_TO=${e.RUNNER_TRIAGE_TO || ''}
+
+RUNNER_BOUNCE_FROM=${e.RUNNER_BOUNCE_FROM || ''}
+RUNNER_BOUNCE_TO=${e.RUNNER_BOUNCE_TO || ''}
+
+MAX_BOUNCES=${e.MAX_BOUNCES || '3'}
+`;
 
     const envPath = path.join(PROJECT_ROOT, '.env');
-    fs.writeFileSync(envPath, envLines.join('\n'), 'utf-8');
+    fs.writeFileSync(envPath, envContent, 'utf-8');
 
     // 2. Write adapter config if provided
     if (adapterConfig && Object.keys(adapterConfig).length > 0) {
+      // Separate statuses and transitions for organized output
+      const statusEntries = [];
+      const transEntries = [];
+      for (const [key, value] of Object.entries(adapterConfig)) {
+        const needsQuotes = /[\s#=]/.test(String(value));
+        const formatted = `${key}=${needsQuotes ? '"' + value + '"' : value}`;
+        if (key.startsWith('STATUS_')) statusEntries.push(formatted);
+        else if (key.startsWith('TRANSITION_TO_')) transEntries.push(formatted);
+        else statusEntries.push(formatted);
+      }
+
       const configLines = [
         '#!/usr/bin/env bash',
         `# ${adapter} adapter configuration`,
-        '# Generated by setup wizard',
+        `# Generated by setup wizard on ${new Date().toISOString().split('T')[0]}`,
+        '',
+        '# Status ID -> display name',
+        ...statusEntries,
+        '',
+        '# How to transition a card TO each status (transition IDs)',
+        ...transEntries,
         '',
       ];
-
-      for (const [key, value] of Object.entries(adapterConfig)) {
-        configLines.push(`${key}=${value}`);
-      }
-      configLines.push('');
 
       const adapterConfigPath = path.join(PROJECT_ROOT, 'adapters', `${adapter}.config.sh`);
       fs.writeFileSync(adapterConfigPath, configLines.join('\n'), 'utf-8');
@@ -436,22 +578,77 @@ async function handleStartRunner(req, res) {
     return sendJSON(res, 200, { success: true, pid: runnerPID, message: 'Runner is already active' });
   }
 
-  try {
-    const runnerScript = path.join(PROJECT_ROOT, 'core', 'runner.sh');
+  const body = await readBody(req);
 
-    if (!fs.existsSync(runnerScript)) {
-      return sendJSON(res, 500, { success: false, message: 'core/runner.sh not found' });
+  try {
+    let runnerScript = path.join(PROJECT_ROOT, 'core', 'loop.sh');
+    let cwd = PROJECT_ROOT;
+
+    // Convert Windows paths to Git Bash-style (C:\foo → /c/foo)
+    if (process.platform === 'win32') {
+      runnerScript = runnerScript.replace(/\\/g, '/').replace(/^([A-Za-z]):/, (_, d) => '/' + d.toLowerCase());
+      cwd = cwd.replace(/\\/g, '/').replace(/^([A-Za-z]):/, (_, d) => '/' + d.toLowerCase());
     }
 
-    runnerProcess = spawn('bash', [runnerScript], {
-      cwd: PROJECT_ROOT,
-      detached: true,
-      stdio: 'ignore',
-      env: { ...process.env },
-    });
+    if (!fs.existsSync(path.join(PROJECT_ROOT, 'core', 'loop.sh'))) {
+      return sendJSON(res, 500, { success: false, message: 'core/loop.sh not found' });
+    }
 
-    runnerProcess.unref();
+    // Write runner output to a log file so we can track it
+    const logPath = path.join(PROJECT_ROOT, 'runner.log');
+    const logFd = fs.openSync(logPath, 'a');
+
+    const background = body && body.background === true;
+
+    if (background) {
+      // Background mode: no visible window, output to log file
+      runnerProcess = spawn('bash', [runnerScript], {
+        cwd: cwd,
+        stdio: ['ignore', logFd, logFd],
+        env: { ...process.env },
+        windowsHide: true,
+      });
+    } else if (process.platform === 'win32') {
+      // Visible window on Windows: find git-bash and open a mintty terminal
+      const gitBashPaths = [
+        'C:\\Program Files\\Git\\git-bash.exe',
+        'C:\\Program Files (x86)\\Git\\git-bash.exe',
+      ];
+      let gitBash = null;
+      for (const p of gitBashPaths) {
+        if (fs.existsSync(p)) { gitBash = p; break; }
+      }
+      if (gitBash) {
+        runnerProcess = spawn(gitBash, ['--cd=' + PROJECT_ROOT, '-c', 'bash core/loop.sh; read -p "Runner exited. Press Enter to close."'], {
+          stdio: 'ignore',
+          env: { ...process.env },
+        });
+      } else {
+        // Fallback: run in background if git-bash not found
+        runnerProcess = spawn('bash', [runnerScript], {
+          cwd: cwd,
+          stdio: ['ignore', logFd, logFd],
+          env: { ...process.env },
+          windowsHide: true,
+        });
+      }
+    } else {
+      // Visible on macOS/Linux: inherit stdio
+      runnerProcess = spawn('bash', [runnerScript], {
+        cwd: cwd,
+        stdio: ['ignore', logFd, logFd],
+        env: { ...process.env },
+      });
+    }
+
     runnerPID = runnerProcess.pid;
+
+    // Don't crash the server if the runner exits
+    runnerProcess.on('error', () => {});
+    runnerProcess.on('exit', () => {
+      runnerProcess = null;
+      runnerPID = null;
+    });
 
     sendJSON(res, 200, { success: true, pid: runnerPID });
   } catch (err) {
@@ -491,6 +688,7 @@ async function handleRunnerStatus(req, res) {
 // ─── Route table ────────────────────────────────────────────────────
 
 const API_ROUTES = {
+  '/api/load-config':        handleLoadConfig,
   '/api/check-dependencies': handleCheckDependencies,
   '/api/test-connection':    handleTestConnection,
   '/api/discover-board':     handleDiscoverBoard,
@@ -582,6 +780,35 @@ const server = http.createServer(async (req, res) => {
   }
 
   serveStaticFile(req, res, resolvedPath);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\nERROR: Port ${PORT} is already in use.`);
+    console.error('Another instance of the setup wizard may still be running.');
+    console.error('');
+    if (process.platform === 'win32') {
+      console.error('To fix this, run:');
+      console.error(`  netstat -ano | findstr :${PORT}`);
+      console.error('  taskkill /PID <pid> /F');
+    } else {
+      console.error(`To fix this, run: lsof -ti:${PORT} | xargs kill`);
+    }
+    console.error('');
+    console.error('Then try again.');
+    // Keep the window open on Windows so user can read the message
+    if (process.platform === 'win32') {
+      console.error('Press any key to exit...');
+      process.stdin.setRawMode && process.stdin.setRawMode(true);
+      process.stdin.resume();
+      process.stdin.once('data', () => process.exit(1));
+    } else {
+      process.exit(1);
+    }
+  } else {
+    console.error('Server error:', err.message);
+    process.exit(1);
+  }
 });
 
 server.listen(PORT, () => {

@@ -28,34 +28,38 @@ fi
 export GIT_BASE_BRANCH="${GIT_BASE_BRANCH:-main}"
 export POLL_INTERVAL="${POLL_INTERVAL:-3600}"
 export MAX_CARDS_REFINE="${MAX_CARDS_REFINE:-5}"
+export MAX_CARDS_ARCHITECT="${MAX_CARDS_ARCHITECT:-5}"
 export MAX_CARDS_CODE="${MAX_CARDS_CODE:-2}"
 export MAX_CARDS_REVIEW="${MAX_CARDS_REVIEW:-10}"
 export MAX_CARDS_TRIAGE="${MAX_CARDS_TRIAGE:-5}"
 export MAX_CARDS_BOUNCE="${MAX_CARDS_BOUNCE:-10}"
-export RECIPES_ENABLED="${RECIPES_ENABLED:-refine,code}"
+export RUNNERS_ENABLED="${RUNNERS_ENABLED:-refine,code}"
 
 # Adapter-specific
 export BOARD_EMAIL="${BOARD_EMAIL:-}"
 
-# Recipe lane routing — where each recipe reads from and transitions to
-# FROM = status name on the board (used in queries)
-# TO = transition key suffix (maps to TRANSITION_* in adapter config, empty = don't move)
-export RECIPE_REFINE_FROM="${RECIPE_REFINE_FROM:-To Do}"
-export RECIPE_REFINE_TO="${RECIPE_REFINE_TO:-REFINED}"
+# Runner lane routing — where each runner reads from and transitions to
+# FROM = status ID on the board (used in JQL queries)
+# TO = status ID to transition to (looks up TRANSITION_TO_<id> in adapter config, empty = don't move)
+export RUNNER_REFINE_FROM="${RUNNER_REFINE_FROM:-}"
+export RUNNER_REFINE_TO="${RUNNER_REFINE_TO:-}"
 
-export RECIPE_CODE_FROM="${RECIPE_CODE_FROM:-Agent}"
-export RECIPE_CODE_TO="${RECIPE_CODE_TO:-QA}"
+export RUNNER_ARCHITECT_FROM="${RUNNER_ARCHITECT_FROM:-}"
+export RUNNER_ARCHITECT_TO="${RUNNER_ARCHITECT_TO:-}"
 
-export RECIPE_REVIEW_FROM="${RECIPE_REVIEW_FROM:-QA}"
-export RECIPE_REVIEW_TO="${RECIPE_REVIEW_TO:-}"
+export RUNNER_CODE_FROM="${RUNNER_CODE_FROM:-}"
+export RUNNER_CODE_TO="${RUNNER_CODE_TO:-}"
 
-export RECIPE_TRIAGE_FROM="${RECIPE_TRIAGE_FROM:-To Do}"
-export RECIPE_TRIAGE_TO="${RECIPE_TRIAGE_TO:-REFINED}"
+export RUNNER_REVIEW_FROM="${RUNNER_REVIEW_FROM:-}"
+export RUNNER_REVIEW_TO="${RUNNER_REVIEW_TO:-}"
 
-export RECIPE_BOUNCE_FROM="${RECIPE_BOUNCE_FROM:-QA}"
-export RECIPE_BOUNCE_TO="${RECIPE_BOUNCE_TO:-AGENT}"
+export RUNNER_TRIAGE_FROM="${RUNNER_TRIAGE_FROM:-}"
+export RUNNER_TRIAGE_TO="${RUNNER_TRIAGE_TO:-}"
+
+export RUNNER_BOUNCE_FROM="${RUNNER_BOUNCE_FROM:-}"
+export RUNNER_BOUNCE_TO="${RUNNER_BOUNCE_TO:-}"
 export MAX_BOUNCES="${MAX_BOUNCES:-3}"
-export RECIPE_BOUNCE_ESCALATE="${RECIPE_BOUNCE_ESCALATE:-}"
+export RUNNER_BOUNCE_ESCALATE="${RUNNER_BOUNCE_ESCALATE:-}"
 
 # Load adapter config
 ADAPTER_CONFIG="$SORTA_ROOT/adapters/${BOARD_ADAPTER}.config.sh"

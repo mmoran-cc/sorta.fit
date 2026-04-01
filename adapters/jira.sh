@@ -13,7 +13,7 @@ board_get_cards_in_status() {
   curl -s -X POST \
     -u "$JIRA_AUTH" \
     -H "Content-Type: application/json" \
-    -d "{\"jql\":\"project=$BOARD_PROJECT_KEY AND status=\\\"$status\\\" ORDER BY rank ASC\",\"maxResults\":$max}" \
+    -d "{\"jql\":\"project=$BOARD_PROJECT_KEY AND status=$status ORDER BY rank ASC\",\"maxResults\":$max}" \
     "$JIRA_BASE/search/jql" | \
     node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);if(j.issues)j.issues.forEach(i=>console.log(i.id));})"
 }
@@ -179,17 +179,19 @@ board_transition() {
 board_discover() {
   echo "=== Statuses ==="
   curl -s -u "$JIRA_AUTH" "$JIRA_BASE/project/$BOARD_PROJECT_KEY/statuses" | \
-    node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);j[0].statuses.forEach(s=>console.log(s.id,'-',s.name));})"
+    node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);const seen=new Set();j.forEach(t=>t.statuses.forEach(s=>{if(!seen.has(s.id)){seen.add(s.id);console.log(s.id,'-',s.name)}}));})"
 
   echo ""
   echo "=== Transitions (from first issue) ==="
-  local first_id
-  first_id=$(board_get_cards_in_status "To Do" 1 2>/dev/null || board_get_cards_in_status "Backlog" 1 2>/dev/null || echo "")
-  if [[ -n "$first_id" ]]; then
-    local first_key
-    first_key=$(board_get_card_key "$first_id")
+  local first_key
+  first_key=$(curl -s -X POST -u "$JIRA_AUTH" -H "Content-Type: application/json" \
+    -d "{\"jql\":\"project=$BOARD_PROJECT_KEY ORDER BY rank ASC\",\"maxResults\":1}" \
+    "$JIRA_BASE/search/jql" | \
+    node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);if(j.issues&&j.issues[0])console.log(j.issues[0].key);})")
+
+  if [[ -n "$first_key" ]]; then
     curl -s -u "$JIRA_AUTH" "$JIRA_BASE/issue/$first_key/transitions" | \
-      node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);j.transitions.forEach(t=>console.log(t.id,'-',t.name,'->',t.to.name));})"
+      node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);j.transitions.forEach(t=>console.log(t.id,'-',t.name,'->',t.to.name,'(id:',t.to.id,')'));})"
   else
     echo "No issues found. Create an issue first, then run discover again."
   fi

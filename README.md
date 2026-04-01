@@ -1,74 +1,108 @@
 # Sorta.Fit
 
-AI-powered sprint automation that connects your issue board to Claude Code for hands-off card refinement, implementation, and PR review.
+Autonomous sprint execution powered by Claude Code. Sorta.Fit connects your issue board to Claude Code, polls for cards, and runs them through a configurable pipeline: spec refinement, implementation in isolated worktrees, PR creation, code review, and bug triage.
+
+It runs in the background on your computer -- as long as it's on, your board keeps moving. Configure human review gates where you need them, or let it handle everything.
 
 ```
-                +-------------+
-                | Issue Board |
-                | (Jira, ...) |
-                +------+------+
-                       |
-                  read |  cards
-                       v
-              +--------+--------+
-              |  Sorta   |
-              |  (runner loop)  |
-              +--------+--------+
-                       |
-                render |  prompts
-                       v
-              +--------+--------+
-              |   Claude Code   |
-              |   (CLI agent)   |
-              +--------+--------+
-                       |
-            implement  |  review
-                       v
-              +--------+--------+
-              |   Git / GitHub  |
-              | (branches, PRs) |
-              +--------+--------+
-                       |
-              comment  |  transition
-                       v
-                +------+------+
-                | Issue Board |
-                | (updated)   |
-                +-------------+
+     [To Do] --refine--> [Refined] --you--> [Agent] --code--> [QA] --review--> [QA] --you--> [Done]
 ```
 
-## What It Does
+## Why Sorta.Fit
 
-- **Refines cards** -- picks up To Do items, runs Claude against your codebase, and writes structured specs with acceptance criteria, technical context, and testing requirements back to the card.
-- **Implements cards** -- picks up Agent lane items, creates an isolated worktree, runs Claude Code to build the feature, pushes a branch, opens a PR, and moves the card to QA.
-- **Reviews PRs** -- picks up QA cards, fetches the PR diff, runs Claude for a code review, and posts the review directly on GitHub.
-- **Triages bugs** -- analyzes bug reports against the codebase, identifies likely root causes and affected files, and writes a triage report back to the card.
+- **No API token costs** — Sorta.Fit uses the Claude Code CLI, not the API. You're running on your existing Claude subscription, not paying per-token.
+- **Works with free tools** — Jira is free for up to 10 users. GitHub free tier covers everything you need. There's nothing extra to buy.
+- **Runs on your machine** — No cloud infrastructure, no CI minutes, no hosted agents. It runs in the background on your computer using your local environment.
+- **Works with your board** — Sorta.Fit connects to the board you already use. Jira Cloud is supported today, with Linear and GitHub Issues planned.
+
+## How It Works
+
+Sorta.Fit runs from **inside your project repository** so it can read your code, run your tests, and commit to branches. Drop the `sorta-fit` folder into your repo and run the setup from there.
+
+1. **Loop** (`core/loop.sh`) starts a polling loop that fires every `POLL_INTERVAL` seconds.
+2. Each cycle, it runs the enabled **runners** in order.
+3. Each runner queries your issue board for cards in its pickup lane using the **adapter** interface.
+4. For each card, the runner renders a **prompt template** with the card's details and passes it to Claude Code CLI.
+5. Claude's output is written back to the board (updated descriptions, comments, transitions) and/or to GitHub (branches, PRs, reviews).
+
+The adapter layer means Sorta.Fit is not tied to any one board. Implement the `board_*` functions for your platform and everything else works unchanged.
+
+## Requirements
+
+- **Git** (with Git Bash on Windows -- included with [Git for Windows](https://git-scm.com/downloads))
+- **Node.js** ([nodejs.org](https://nodejs.org))
+- **Claude Code CLI** ([claude.ai/code](https://claude.ai/code))
+- **GitHub CLI** ([cli.github.com](https://cli.github.com))
+
+On Windows, the runner and all scripts run inside Git Bash. Git for Windows includes this automatically.
 
 ## Quick Start
 
-**Windows:**
-Double-click `setup.bat` to launch the setup wizard in your browser.
+### Setup Wizard (recommended)
+
+**Windows:** Double-click `setup.bat`
 
 **macOS / Linux:**
 ```bash
 bash setup.sh
 ```
 
-The wizard walks you through configuring your board connection, discovering status/transition IDs, and selecting which recipes to enable. Once complete, it writes your `.env` and adapter config files.
+The wizard walks you through:
+1. Checking dependencies
+2. Connecting to your board and discovering statuses/transitions
+3. Selecting which runners to enable
+4. Configuring pickup and result lanes for each runner
+5. Setting git and polling options
 
-For manual setup without the wizard, see the [Setup Guide](docs/setup-guide.md).
+Once complete, it writes your `.env` and adapter config files.
 
-## Recipes
+### Manual Setup
 
-| Recipe | What It Does | Lane Flow |
-|--------|-------------|-----------|
-| `refine` | Generates structured spec from card title | To Do --> Refined |
+1. Copy `.env.example` to `.env` and fill in your values.
+2. Copy `adapters/jira.config.sh.example` to `adapters/jira.config.sh` and fill in your status and transition IDs (run `bash -c "source core/config.sh && source adapters/jira.sh && board_discover"` to find them).
+3. Start the runner:
+
+**Windows:** Double-click `run.bat` or run `bash run.sh` from Git Bash
+
+**macOS / Linux:**
+```bash
+bash run.sh
+```
+
+For a complete reference of every configuration variable, see the [Setup Guide](docs/setup-guide.md).
+
+## Runners
+
+| Runner | What It Does | Default Flow |
+|--------|-------------|-------------|
+| `refine` | Generates structured spec from card | To Do --> Refined |
 | `code` | Implements card, creates branch and PR | Agent --> QA |
 | `review` | Reviews PR diff, posts GitHub review | QA --> QA (stays) |
 | `triage` | Analyzes bug report, writes triage to card | To Do --> Refined |
+| `bounce` | Moves rejected PRs back for rework | QA --> Agent |
 | `release-notes` | Generates grouped changelog from git history | Manual run |
 
-Full documentation for each recipe: [docs/recipes.md](docs/recipes.md)
+Each runner's pickup and result lanes are configurable -- the defaults above match the suggested human-gates workflow.
+
+Full documentation: [docs/runners.md](docs/runners.md)
+
+## Workflow Options
+
+### Human Gates (recommended)
+
+You review specs before implementation starts, and review PRs before merging. The automated pipeline handles everything in between.
+
+```
+[To Do] --refine--> [Refined] --you--> [Agent] --code--> [QA] --review--> [QA] --you--> [Done]
+```
+
+### Fully Autonomous (work in progress)
+
+Everything automated end-to-end. Auto-merge is not yet implemented -- PR merge to Done still requires a human step.
+
+```
+[To Do] --refine--> [Agent] --code--> [QA] --review--> [Done]
+```
 
 ## Supported Boards
 
@@ -80,34 +114,22 @@ Full documentation for each recipe: [docs/recipes.md](docs/recipes.md)
 
 Adapter documentation and how to write your own: [docs/adapters.md](docs/adapters.md)
 
-## How It Works
+## Safety
 
-Sorta is a set of bash scripts orchestrated by a simple polling loop.
-
-1. **Runner** (`core/runner.sh`) starts a loop that fires every `POLL_INTERVAL` seconds.
-2. Each cycle, it runs the enabled **recipes** in order (e.g., `refine`, then `code`).
-3. Each recipe queries the issue board for cards in its source lane using the **adapter** interface.
-4. For each card, the recipe renders a **prompt template** with the card's details and passes it to Claude Code CLI.
-5. Claude's output is written back to the board (updated descriptions, comments, transitions) and/or to GitHub (branches, PRs, reviews).
-
-The adapter layer means Sorta is not tied to any one board. Implement the `board_*` functions for your platform and everything else works unchanged.
-
-## Safety Features
-
-- **Worktrees** -- The `code` recipe works in isolated git worktrees. Your main working tree is never modified.
-- **Protected branch checks** -- Branches named `main`, `master`, `dev`, or `develop` are never checked out or pushed to.
-- **Lock files** -- A lock file prevents overlapping cycles if a previous run is still in progress.
-- **No force push** -- Sorta never uses `git push --force` or any destructive git operation.
-- **Branch naming** -- All AI-created branches are prefixed with `claude/` and include the issue key for traceability.
-
-## Configuration
-
-All configuration is done through environment variables in a `.env` file. See the [Setup Guide](docs/setup-guide.md) for a complete reference of every variable.
+- **Worktrees** -- The `code` runner works in isolated git worktrees. Your main working tree is never modified.
+- **Protected branches** -- Branches named `main`, `master`, `dev`, or `develop` are never checked out or pushed to.
+- **Lock files** -- Prevents overlapping cycles if a previous run is still in progress.
+- **No force push** -- Never uses `git push --force` or any destructive git operation.
+- **Branch naming** -- All AI-created branches are prefixed with `claude/` and include the issue key.
 
 ## Contributing
 
-Contributions are welcome. See [docs/contributing.md](docs/contributing.md) for the fork-branch-PR workflow, code style guide, and instructions for adding recipes and adapters.
+Contributions are welcome. See [docs/contributing.md](docs/contributing.md) for the fork-branch-PR workflow, code style guide, and instructions for adding runners and adapters.
 
 ## License
 
 AGPL-3.0 -- see [LICENSE](LICENSE).
+
+---
+
+*Dedicated to Becky — my favorite runner.*

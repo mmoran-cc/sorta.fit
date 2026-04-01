@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Recipe: Review PRs in QA lane
+# Runner: Review — reviews PR diffs and posts feedback
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,12 +9,12 @@ source "$SORTA_ROOT/core/config.sh"
 source "$SORTA_ROOT/core/utils.sh"
 source "$SORTA_ROOT/adapters/${BOARD_ADAPTER}.sh"
 
-log_info "Reviewer: checking $RECIPE_REVIEW_FROM lane..."
+log_info "Reviewer: checking $RUNNER_REVIEW_FROM lane..."
 
-ISSUE_IDS=$(board_get_cards_in_status "$RECIPE_REVIEW_FROM" "$MAX_CARDS_REVIEW")
+ISSUE_IDS=$(board_get_cards_in_status "$RUNNER_REVIEW_FROM" "$MAX_CARDS_REVIEW")
 
 if [[ -z "$ISSUE_IDS" ]]; then
-  log_info "No cards in $RECIPE_REVIEW_FROM. Nothing to review."
+  log_info "No cards in $RUNNER_REVIEW_FROM. Nothing to review."
   exit 0
 fi
 
@@ -121,11 +121,11 @@ for ISSUE_ID in $ISSUE_IDS; do
 
 $REVIEW"
 
-  if [[ -n "$RECIPE_REVIEW_TO" ]]; then
-    local_transition="TRANSITION_TO_${RECIPE_REVIEW_TO}"
+  if [[ -n "$RUNNER_REVIEW_TO" ]]; then
+    local_transition="TRANSITION_TO_${RUNNER_REVIEW_TO}"
     board_transition "$ISSUE_KEY" "${!local_transition}"
-    log_info "Review complete for $ISSUE_KEY. Moved to $RECIPE_REVIEW_TO."
+    log_info "Review complete for $ISSUE_KEY. Moved to $RUNNER_REVIEW_TO."
   else
-    log_info "Review complete for $ISSUE_KEY. Card stays in $RECIPE_REVIEW_FROM."
+    log_info "Review complete for $ISSUE_KEY. Card stays in $RUNNER_REVIEW_FROM."
   fi
 done
