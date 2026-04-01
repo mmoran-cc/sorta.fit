@@ -1,0 +1,6 @@
+node_modules/
+.env
+.automation.lock
+.worktrees/
+dist/
+*.log

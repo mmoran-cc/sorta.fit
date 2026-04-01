@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# Sorta.Fit — Common utilities
+
+# Colors (disabled if not a terminal)
+if [[ -t 1 ]]; then
+  RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
+else
+  RED=''; GREEN=''; YELLOW=''; BLUE=''; NC=''
+fi
+
+log_info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
+log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
+log_step()  { echo -e "${BLUE}[STEP]${NC} $*"; }
+
+# Check if a command exists, print install help if not
+require_command() {
+  local cmd="$1"
+  local install_hint="${2:-}"
+  if ! command -v "$cmd" &>/dev/null; then
+    # Windows fallback paths
+    case "$cmd" in
+      gh)
+        if [[ -f "/c/Program Files/GitHub CLI/gh.exe" ]]; then
+          return 0
+        fi
+        ;;
+    esac
+    log_error "'$cmd' is not installed."
+    [[ -n "$install_hint" ]] && echo "  Install: $install_hint"
+    return 1
+  fi
+}
+
+# Find gh command (handles Windows path issues)
+find_gh() {
+  if command -v gh &>/dev/null; then
+    echo "gh"
+  elif [[ -f "/c/Program Files/GitHub CLI/gh.exe" ]]; then
+    echo "/c/Program Files/GitHub CLI/gh.exe"
+  else
+    echo "gh"
+  fi
+}
+
+# Verify all dependencies
+preflight_check() {
+  local failed=0
+  log_step "Checking dependencies..."
+
+  require_command "claude" "https://claude.ai/code" || failed=1
+  require_command "git" "https://git-scm.com/downloads" || failed=1
+  require_command "node" "https://nodejs.org" || failed=1
+  require_command "curl" "Included with Git Bash on Windows" || failed=1
+
+  local gh_cmd
+  gh_cmd=$(find_gh)
+  if ! "$gh_cmd" --version &>/dev/null 2>&1; then
+    log_error "'gh' (GitHub CLI) is not installed."
+    echo "  Install: https://cli.github.com"
+    failed=1
+  fi
+
+  if [[ $failed -eq 1 ]]; then
+    log_error "Missing dependencies. Install them and try again."
+    return 1
+  fi
+
+  log_info "All dependencies found."
+}
+
+# Convert text to branch-safe slug
+slugify() {
+  echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//' | cut -c1-40
+}
+
+# Lock file management
+lock_acquire() {
+  local lock_file="$1"
+  if [[ -f "$lock_file" ]]; then
+    local lock_pid
+    lock_pid=$(cat "$lock_file" 2>/dev/null)
+    if kill -0 "$lock_pid" 2>/dev/null; then
+      log_warn "Previous cycle (PID $lock_pid) still running. Skipping."
+      return 1
+    else
+      log_warn "Stale lock (PID $lock_pid). Removing."
+      rm -f "$lock_file"
+    fi
+  fi
+  echo $$ > "$lock_file"
+  return 0
+}
+
+lock_release() {
+  local lock_file="$1"
+  rm -f "$lock_file"
+}
+
+# Render a prompt template — replaces {{KEY}} with values
+# Usage: render_template "file.md" KEY1 "value1" KEY2 "value2"
+render_template() {
+  local template_file="$1"
+  shift
+
+  if [[ ! -f "$template_file" ]]; then
+    log_error "Template not found: $template_file"
+    return 1
+  fi
+
+  local content
+  content=$(cat "$template_file")
+
+  while [[ $# -ge 2 ]]; do
+    local key="$1"
+    local value="$2"
+    shift 2
+    # Use node for safe replacement (handles special chars)
+    content=$(node -e "
+      const content = process.argv[1];
+      const key = process.argv[2];
+      const value = process.argv[3];
+      console.log(content.split('{{' + key + '}}').join(value));
+    " "$content" "$key" "$value")
+  done
+
+  echo "$content"
+}
