@@ -71,7 +71,7 @@ for ISSUE_ID in $ISSUE_IDS; do
   printf '%s' "$PROMPT" > "$PROMPT_FILE"
 
   log_info "Running Claude for review..."
-  (claude -p "$(cat "$PROMPT_FILE")" > "$RESULT_FILE" 2>/dev/null) || {
+  (cd "$TARGET_REPO" && claude -p "$(cat "$PROMPT_FILE")" > "$RESULT_FILE" 2>/dev/null) || {
     log_error "Claude failed for review of $ISSUE_KEY"
     rm -f "$PROMPT_FILE" "$RESULT_FILE"
     continue

@@ -43,7 +43,7 @@ for ISSUE_ID in $ISSUE_IDS; do
   RESULT_FILE=$(mktemp)
   printf '%s' "$PROMPT" > "$PROMPT_FILE"
 
-  (claude -p "$(cat "$PROMPT_FILE")" > "$RESULT_FILE" 2>/dev/null) || {
+  (cd "$TARGET_REPO" && claude -p "$(cat "$PROMPT_FILE")" > "$RESULT_FILE" 2>/dev/null) || {
     log_error "Claude failed for $ISSUE_KEY"
     rm -f "$PROMPT_FILE" "$RESULT_FILE"
     continue
