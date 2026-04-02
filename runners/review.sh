@@ -103,7 +103,7 @@ for ISSUE_ID in $ISSUE_IDS; do
   printf '%s' "$REVIEW" > "$REVIEW_BODY_FILE"
 
   "$GH_CMD" pr review "$PR_URL" --"$REVIEW_EVENT" --body-file "$REVIEW_BODY_FILE" 2>/dev/null || {
-    log_warn "PR review failed. Falling back to comment."
+    log_info "Posting as comment (can't review your own PR)."
     "$GH_CMD" pr comment "$PR_URL" --body-file "$REVIEW_BODY_FILE" 2>/dev/null || \
       log_error "Could not post review to $PR_URL"
   }
