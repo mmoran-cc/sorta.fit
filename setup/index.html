@@ -609,6 +609,7 @@ select option:disabled {
 
   var RUNNER_DEFS = [
     { id: "refine", name: "Refine", desc: "Break down cards into acceptance criteria and specs using AI analysis." },
+    { id: "architect", name: "Architect", desc: "Analyze codebase architecture and produce implementation plans for refined cards." },
     { id: "code", name: "Code", desc: "Implement cards in isolated worktrees, open PRs automatically." },
     { id: "review", name: "Review", desc: "Review PR diffs and post structured feedback on GitHub." },
     { id: "triage", name: "Triage", desc: "Analyze bug reports, identify root causes, write triage reports." },
@@ -632,11 +633,12 @@ select option:disabled {
       pollInterval: 60,
       recipes: ["refine", "code"],
       routing: {
-        refine:  { fromId: "", toId: "", maxCards: 5 },
-        code:    { fromId: "", toId: "", maxCards: 2 },
-        review:  { fromId: "", toId: "", maxCards: 10 },
-        triage:  { fromId: "", toId: "", maxCards: 5 },
-        bounce:  { fromId: "", toId: "", maxCards: 10 }
+        refine:    { fromId: "", toId: "", maxCards: 5 },
+        architect: { fromId: "", toId: "", maxCards: 5 },
+        code:      { fromId: "", toId: "", maxCards: 2 },
+        review:    { fromId: "", toId: "", maxCards: 10 },
+        triage:    { fromId: "", toId: "", maxCards: 5 },
+        bounce:    { fromId: "", toId: "", maxCards: 10 }
       }
     },
     runner: {
@@ -1381,7 +1383,7 @@ select option:disabled {
       };
 
       // Add per-recipe routing and max cards
-      var recipeIds = ["refine", "code", "review", "triage", "bounce"];
+      var recipeIds = ["refine", "architect", "code", "review", "triage", "bounce"];
       for (var i = 0; i < recipeIds.length; i++) {
         var rid = recipeIds[i];
         var upper = rid.toUpperCase();
@@ -1633,7 +1635,7 @@ select option:disabled {
           state.config.recipes = env.RUNNERS_ENABLED.split(",").map(function(s) { return s.trim(); });
         }
 
-        var recipeIds = ["refine", "code", "review", "triage", "bounce"];
+        var recipeIds = ["refine", "architect", "code", "review", "triage", "bounce"];
         for (var i = 0; i < recipeIds.length; i++) {
           var rid = recipeIds[i];
           var upper = rid.toUpperCase();
