@@ -94,6 +94,7 @@ For a complete reference of every configuration variable, see the [Setup Guide](
 | `triage` | Analyzes bug report, writes triage to card | To Do --> Refined |
 | `bounce` | Moves rejected PRs back for rework | QA --> Agent |
 | `merge` | Merges approved PRs, transitions card to done | QA --> Done |
+| `documenter` | Generates docs from card spec, opens PR | (configurable) |
 | `release-notes` | Generates grouped changelog from git history | Manual run |
 
 Each runner's pickup and result lanes are configurable -- the defaults above match the suggested human-gates workflow.
